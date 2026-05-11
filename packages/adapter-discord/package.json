@@ -1,6 +1,6 @@
 {
   "name": "@msgly/discord",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Discord (HTTP Interactions) adapter for Msgly",
   "license": "MIT",
   "type": "module",

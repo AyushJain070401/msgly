@@ -1,0 +1,33 @@
+{
+  "name": "chatterbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Open-source unified messaging library for WhatsApp, Instagram, Messenger, Telegram, and LINE",
+  "license": "MIT",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "tsup": "^8.0.0",
+    "turbo": "^1.13.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}

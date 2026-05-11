@@ -1,0 +1,53 @@
+{
+  "name": "@chatterbox/whatsapp",
+  "version": "0.1.0",
+  "description": "WhatsApp Cloud API adapter for Chatterbox",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@chatterbox/core": "workspace:*",
+    "undici": "^6.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AyushJain070401/chatterbox.git",
+    "directory": "packages/adapter-whatsapp"
+  },
+  "keywords": [
+    "whatsapp",
+    "messaging",
+    "bot",
+    "chatbot",
+    "webhook"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "express-basic",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file=.env src/server.ts",
+    "build": "echo 'no build'",
+    "test": "echo 'no tests'",
+    "lint": "echo 'no lint'",
+    "typecheck": "tsc --noEmit",
+    "clean": "echo 'no clean'"
+  },
+  "dependencies": {
+    "@chatterbox/core": "workspace:*",
+    "@chatterbox/telegram": "workspace:*",
+    "@chatterbox/line": "workspace:*",
+    "@chatterbox/messenger": "workspace:*",
+    "@chatterbox/instagram": "workspace:*",
+    "@chatterbox/whatsapp": "workspace:*",
+    "express": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "tsx": "^4.7.0"
+  }
+}

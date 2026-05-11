@@ -1,10 +1,10 @@
 import express, { type Request } from 'express';
-import { MessagingHub } from '@chatterbox/core';
-import { TelegramAdapter } from '@chatterbox/telegram';
-import { LineAdapter } from '@chatterbox/line';
-import { MessengerAdapter } from '@chatterbox/messenger';
-import { InstagramAdapter } from '@chatterbox/instagram';
-import { WhatsAppAdapter } from '@chatterbox/whatsapp';
+import { MessagingHub } from '@msgly/core';
+import { TelegramAdapter } from '@msgly/telegram';
+import { LineAdapter } from '@msgly/line';
+import { MessengerAdapter } from '@msgly/messenger';
+import { InstagramAdapter } from '@msgly/instagram';
+import { WhatsAppAdapter } from '@msgly/whatsapp';
 
 const app = express();
 

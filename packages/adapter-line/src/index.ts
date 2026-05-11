@@ -13,7 +13,7 @@ import {
   type MessageContent,
   type OutboundMessage,
   type WebhookRequest,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 export interface LineConfig {
   /** Channel access token (long-lived) from the LINE Developers Console. */

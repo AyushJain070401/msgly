@@ -12,7 +12,7 @@ import {
   type MediaReference,
   type OutboundMessage,
   type WebhookRequest,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 export interface TelegramConfig {
   /** Bot token from @BotFather. */

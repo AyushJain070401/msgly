@@ -13,7 +13,7 @@ import {
   type MessageContent,
   type OutboundMessage,
   type WebhookRequest,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 export interface MetaGraphConfig {
   /** Page access token (Messenger) or IG account access token. */

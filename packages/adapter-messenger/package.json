@@ -1,5 +1,5 @@
 {
-  "name": "@chatterbox/messenger",
+  "name": "@msgly/messenger",
   "version": "0.1.0",
   "description": "Facebook Messenger adapter for Chatterbox",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@chatterbox/core": "workspace:*",
+    "@msgly/core": "workspace:*",
     "undici": "^6.6.0"
   },
   "devDependencies": {

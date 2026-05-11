@@ -14,7 +14,7 @@ import {
   type MessageContent,
   type OutboundMessage,
   type WebhookRequest,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 export interface WhatsAppConfig {
   /** WhatsApp Business Phone Number ID (numeric, from Meta dashboard). */

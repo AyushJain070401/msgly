@@ -2,7 +2,7 @@ import type {
   AdapterCapabilities,
   ChannelName,
   MessageContent,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 import { MetaGraphAdapter, type MetaGraphConfig } from './meta-base.js';
 

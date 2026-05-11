@@ -1,7 +1,7 @@
 import type {
   AdapterCapabilities,
   ChannelName,
-} from '@chatterbox/core';
+} from '@msgly/core';
 
 import { MetaGraphAdapter, type MetaGraphConfig } from './meta-base.js';
 

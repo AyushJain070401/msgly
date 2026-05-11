@@ -12,12 +12,12 @@
     "clean": "echo 'no clean'"
   },
   "dependencies": {
-    "@chatterbox/core": "workspace:*",
-    "@chatterbox/telegram": "workspace:*",
-    "@chatterbox/line": "workspace:*",
-    "@chatterbox/messenger": "workspace:*",
-    "@chatterbox/instagram": "workspace:*",
-    "@chatterbox/whatsapp": "workspace:*",
+    "@msgly/core": "workspace:*",
+    "@msgly/telegram": "workspace:*",
+    "@msgly/line": "workspace:*",
+    "@msgly/messenger": "workspace:*",
+    "@msgly/instagram": "workspace:*",
+    "@msgly/whatsapp": "workspace:*",
     "express": "^4.19.0"
   },
   "devDependencies": {

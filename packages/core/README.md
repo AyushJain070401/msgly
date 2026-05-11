@@ -2,7 +2,11 @@
 
 > Core engine for Msgly — unified message model, the `createHub` factory, retry, idempotency, capability checks, and the `Adapter` contract every channel package implements. **Zero classes, runs in Node 18+, Next.js (Node + Edge), and the browser.**
 
-`@msgly/core` is the runtime every channel adapter plugs into. You won't usually depend on it directly for application code — install it alongside one or more adapters (`@msgly/telegram`, `@msgly/whatsapp`, `@msgly/line`, `@msgly/messenger`, `@msgly/instagram`).
+`@msgly/core` is the runtime every channel adapter plugs into. You won't usually depend on it directly for application code — install it alongside one or more adapters:
+
+**Chat / messaging**: `@msgly/telegram`, `@msgly/whatsapp`, `@msgly/line`, `@msgly/messenger`, `@msgly/instagram`, `@msgly/discord`, `@msgly/msteams`
+
+**Email**: `@msgly/gmail`, `@msgly/outlook`
 
 ## Install
 
@@ -71,6 +75,7 @@ interface UnifiedMessage {
   id: string;                  // library-generated UUID, stable across retries
   externalId?: string;         // the platform's own message id
   channel: ChannelName;        // 'telegram' | 'whatsapp' | 'line' | 'messenger' | 'instagram'
+                               //   | 'discord' | 'msteams' | 'gmail' | 'outlook'
   account: AccountRef;         // your business identity on that channel
   contact: ContactRef;         // the end user
   content: MessageContent;     // discriminated union, see below
@@ -173,7 +178,7 @@ The `hint` is an actionable string explaining exactly which env var to fix and w
 Returns `{ get, post }` for use with any Express-like framework:
 
 - `GET /webhook/:channel` — handles the Meta-family subscription handshake (`hub.verify_token` check)
-- `POST /webhook/:channel` — verifies HMAC signature, dispatches to the right adapter, deduplicates via `externalId`, emits `message` events
+- `POST /webhook/:channel` — verifies the channel's signature (HMAC / Ed25519 / RS256 JWT / shared-secret depending on adapter), optionally short-circuits with a platform-specific ack body (Discord PONG, Graph `validationToken` echo), dispatches to the right adapter, deduplicates via `externalId`, emits `message` events
 
 ```typescript
 const handlers = hub.createWebhookHandler();
@@ -181,7 +186,14 @@ app.get('/webhook/:channel', handlers.get);
 app.post('/webhook/:channel', handlers.post);
 ```
 
-> **Raw body is required.** Signature verification needs the byte-exact request body as a `Uint8Array`. Configure your JSON parser to expose it on `req.rawBody` — for Express: `express.json({ verify: (req, _r, buf) => (req.rawBody = new Uint8Array(buf)) })`.
+> **Raw body is required.** Signature verification needs the byte-exact request body as a `Uint8Array`. Configure your body parser to expose it on `req.rawBody`. For Express, capture across **all content-types** so platform handshakes that arrive as `text/plain` (e.g. Microsoft Graph's `validationToken`) aren't dropped:
+>
+> ```typescript
+> const captureRaw = (req, _res, buf) => { req.rawBody = new Uint8Array(buf); };
+> app.use(express.json({ verify: captureRaw }));
+> app.use(express.urlencoded({ extended: true, verify: captureRaw }));
+> app.use(express.raw({ type: '*/*', verify: captureRaw })); // fallback for text/plain etc.
+> ```
 
 ### `hub.handleWebhook(channel, req)`
 
@@ -248,18 +260,20 @@ try {
 
 Cross-channel matrix:
 
-| Feature        | Telegram | WhatsApp | LINE | Messenger | Instagram |
-| -------------- | -------- | -------- | ---- | --------- | --------- |
-| text           | ✓        | ✓        | ✓    | ✓         | ✓         |
-| image          | ✓        | ✓        | ✓    | ✓         | ✓         |
-| video          | ✓        | ✓        | ✓    | ✓         | ✓         |
-| audio          | ✓        | ✓        | ✓    | ✓         | —         |
-| file           | ✓        | ✓        | —    | ✓         | —         |
-| buttons        | ✓        | ✓        | ✓    | ✓         | —         |
-| quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         |
-| templates      | —        | ✓        | —    | —         | —         |
-| reactions      | ✓        | ✓        | —    | —         | ✓         |
-| typing         | ✓        | —        | —    | ✓         | —         |
+| Feature        | Telegram | WhatsApp | LINE | Messenger | Instagram | Discord | Teams | Gmail | Outlook |
+| -------------- | -------- | -------- | ---- | --------- | --------- | ------- | ----- | ----- | ------- |
+| text           | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | ✓     | ✓       |
+| image          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | —     | —       |
+| video          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | —     | —     | —       |
+| audio          | ✓        | ✓        | ✓    | ✓         | —         | ✓       | —     | —     | —       |
+| file           | ✓        | ✓        | —    | ✓         | —         | ✓       | ✓     | —     | —       |
+| buttons        | ✓        | ✓        | ✓    | ✓         | —         | ✓       | ✓     | —     | —       |
+| quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | —       |
+| templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —       |
+| reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —       |
+| typing         | ✓        | —        | —    | ✓         | —         | —       | ✓     | —     | —       |
+
+Email adapters (Gmail, Outlook) are text-only in v1 — inbound attachments come through as best-effort plain-text body extraction, and outbound media is not yet supported.
 
 ## Idempotency and storage
 
@@ -339,8 +353,17 @@ export function createMyAdapter(config: MyConfig): Adapter {
     async downloadMedia(ref: MediaReference): Promise<MediaFile> { /* ... */ },
     async verifyCredentials(): Promise<CredentialsCheckResult> { /* ... */ },
 
-    // Optional — for Meta-style GET handshake:
+    // Optional — for Meta-style GET handshake (Messenger / Instagram / WhatsApp):
     verifyWebhookChallenge(query) { /* ... */ return null; },
+
+    // Optional — for platforms whose POST webhook must reply with a
+    // specific body (Discord PING/PONG, Graph validationToken echo):
+    getInteractionAck(req) {
+      // return null to fall through
+      // return a string → sent as application/json
+      // return { body, contentType } for non-JSON responses (text/plain etc.)
+      return null;
+    },
 
     // Optional lifecycle hooks:
     async start() { /* ... */ },
@@ -374,13 +397,19 @@ Server-side webhook handling needs the raw request bytes — most frameworks exp
 
 ## Adapters
 
-| Channel    | Package              |
-| ---------- | -------------------- |
-| Telegram   | `@msgly/telegram`    |
-| LINE       | `@msgly/line`        |
-| Messenger  | `@msgly/messenger`   |
-| Instagram  | `@msgly/instagram`   |
-| WhatsApp   | `@msgly/whatsapp`    |
+| Channel          | Package            | Inbound auth                                  | Setup notes                                  |
+| ---------------- | ------------------ | --------------------------------------------- | -------------------------------------------- |
+| Telegram         | `@msgly/telegram`  | `X-Telegram-Bot-Api-Secret-Token` header      | Easiest — `@BotFather`, no business approval |
+| LINE             | `@msgly/line`      | HMAC-SHA256, constant-time                    | LINE Developers console                      |
+| Messenger        | `@msgly/messenger` | `X-Hub-Signature-256` HMAC                    | Needs Meta App + Facebook Page               |
+| Instagram        | `@msgly/instagram` | `X-Hub-Signature-256` HMAC                    | IG Business linked to Page                   |
+| WhatsApp         | `@msgly/whatsapp`  | `X-Hub-Signature-256` HMAC                    | Meta WhatsApp Cloud API                      |
+| Discord          | `@msgly/discord`   | Ed25519 over `timestamp + rawBody`            | HTTP Interactions (slash commands + buttons) |
+| Microsoft Teams  | `@msgly/msteams`   | RS256 JWT against Bot Framework JWKS          | Azure Bot resource + Teams channel           |
+| Gmail            | `@msgly/gmail`     | RS256 OIDC JWT (or shared token)              | Pub/Sub push subscription, OAuth refresh token |
+| Outlook / M365   | `@msgly/outlook`   | `clientState` shared secret, constant-time    | Graph change-notification subscription       |
+
+> Email adapters (`gmail`, `outlook`) are text-only in v1. Each is single-mailbox (one OAuth refresh token in config = one inbox). See the per-package READMEs for setup walkthroughs.
 
 ## Documentation
 

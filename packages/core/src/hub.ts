@@ -92,6 +92,12 @@ export interface GenericRequest {
 export interface GenericResponse {
   status(code: number): GenericResponse;
   send(body: string): void;
+  /**
+   * Optional — used when an adapter's `getInteractionAck` returns a JSON body
+   * that must be sent with `application/json` content-type (e.g. Discord PONG).
+   * Express, NestJS, Fastify, and most Node frameworks expose this natively.
+   */
+  setHeader?(name: string, value: string): void;
 }
 
 // ---------- Hub options + public type ----------
@@ -395,12 +401,54 @@ export function createHub(options: HubOptions = {}): Hub {
             return;
           }
           try {
-            await hub.handleWebhook(channel, {
+            const webhookReq: WebhookRequest = {
               headers: req.headers ?? {},
               rawBody,
               body: req.body ?? {},
               query: (req.query ?? {}) as WebhookRequest['query'],
-            });
+            };
+
+            const adapter = adapters.get(channel);
+            if (adapter?.getInteractionAck) {
+              if (!(await adapter.verifySignature(webhookReq))) {
+                res.status(401).send('invalid signature');
+                return;
+              }
+              const ack = adapter.getInteractionAck(webhookReq);
+              if (ack !== null) {
+                // ACK first (some platforms enforce a tight deadline — Discord
+                // requires a response within 3s), then process out-of-band so
+                // a slow `hub.on('message')` handler can't blow the budget.
+                const ackBody = typeof ack === 'string' ? ack : ack.body;
+                const ackContentType =
+                  typeof ack === 'string'
+                    ? 'application/json'
+                    : ack.contentType ?? 'application/json';
+                res.setHeader?.('content-type', ackContentType);
+                res.status(200).send(ackBody);
+
+                void (async () => {
+                  try {
+                    const messages = await adapter.handleWebhook(webhookReq);
+                    for (const msg of messages) {
+                      if (
+                        msg.externalId &&
+                        (await store.hasExternalId(channel, msg.externalId))
+                      ) {
+                        continue;
+                      }
+                      await store.saveMessage(msg);
+                      emitter.emit('message', msg);
+                    }
+                  } catch (err) {
+                    logger.error({ err, channel }, 'post-ack handleWebhook error');
+                  }
+                })();
+                return;
+              }
+            }
+
+            await hub.handleWebhook(channel, webhookReq);
             res.status(200).send('ok');
           } catch (err) {
             logger.error({ err, channel }, 'webhook POST handler error');

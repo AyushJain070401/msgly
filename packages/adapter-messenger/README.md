@@ -1,6 +1,6 @@
 # @msgly/messenger
 
-> Facebook Messenger adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Messenger messages through the unified hub — text, all media types, buttons, quick replies, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
+> Facebook Messenger adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive Messenger messages through the unified hub — text, all media types, buttons, quick replies, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -160,7 +160,7 @@ User taps → your `message` event fires with `content.text` equal to the button
 
 ## Documentation
 
-Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/chatterbox
+Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
 ## License
 

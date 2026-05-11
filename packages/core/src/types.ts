@@ -8,7 +8,11 @@ export type ChannelName =
   | 'whatsapp'
   | 'messenger'
   | 'instagram'
-  | 'line';
+  | 'line'
+  | 'discord'
+  | 'msteams'
+  | 'gmail'
+  | 'outlook';
 
 export type MessageDirection = 'inbound' | 'outbound';
 

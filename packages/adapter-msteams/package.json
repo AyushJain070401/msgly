@@ -1,7 +1,7 @@
 {
-  "name": "@msgly/whatsapp",
+  "name": "@msgly/msteams",
   "version": "0.2.1",
-  "description": "WhatsApp Cloud API adapter for Msgly",
+  "description": "Microsoft Teams (Bot Framework) adapter for Msgly",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,10 +40,12 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/AyushJain070401/msgly.git",
-    "directory": "packages/adapter-whatsapp"
+    "directory": "packages/adapter-msteams"
   },
   "keywords": [
-    "whatsapp",
+    "microsoft-teams",
+    "teams",
+    "bot-framework",
     "messaging",
     "bot",
     "chatbot",

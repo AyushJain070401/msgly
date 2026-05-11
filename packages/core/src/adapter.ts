@@ -104,6 +104,20 @@ export interface Adapter {
    */
   verifyWebhookChallenge?(query: WebhookRequest['query']): string | null;
 
+  /**
+   * For platforms whose POST webhook must reply with a specific body
+   * (e.g. Discord's PING/PONG handshake, Microsoft Graph's `validationToken`
+   * echo during subscription creation). Called after `verifySignature`, before
+   * `handleWebhook`. Return:
+   *   - `null` to fall through to the normal flow
+   *   - a `string` — sent as `application/json`
+   *   - an object — sent with the supplied content-type (default JSON)
+   * Optional — most adapters omit this.
+   */
+  getInteractionAck?(
+    req: WebhookRequest,
+  ): string | { body: string; contentType?: string } | null;
+
   /** Optional lifecycle hook — e.g. start long polling, register webhooks. */
   start?(): Promise<void>;
 

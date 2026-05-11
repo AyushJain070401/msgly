@@ -1,7 +1,7 @@
 {
-  "name": "@msgly/whatsapp",
+  "name": "@msgly/gmail",
   "version": "0.2.1",
-  "description": "WhatsApp Cloud API adapter for Msgly",
+  "description": "Gmail adapter for Msgly — receive and reply to emails via Gmail API + Pub/Sub push",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,13 +40,15 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/AyushJain070401/msgly.git",
-    "directory": "packages/adapter-whatsapp"
+    "directory": "packages/adapter-gmail"
   },
   "keywords": [
-    "whatsapp",
+    "gmail",
+    "email",
+    "google",
+    "pubsub",
+    "agent",
     "messaging",
-    "bot",
-    "chatbot",
     "webhook"
   ]
 }

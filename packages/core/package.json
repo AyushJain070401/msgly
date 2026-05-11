@@ -1,6 +1,6 @@
 {
   "name": "@msgly/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Core engine for the messaging hub — unified message model, adapter contract, event bus",
   "license": "MIT",
   "type": "module",
@@ -37,7 +37,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/AyushJain070401/chatterbox.git",
+    "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/core"
   },
   "keywords": [

@@ -5,6 +5,10 @@ import { createLineAdapter } from '@msgly/line';
 import { createMessengerAdapter } from '@msgly/messenger';
 import { createInstagramAdapter } from '@msgly/instagram';
 import { createWhatsAppAdapter } from '@msgly/whatsapp';
+import { createDiscordAdapter } from '@msgly/discord';
+import { createMsTeamsAdapter } from '@msgly/msteams';
+import { createGmailAdapter } from '@msgly/gmail';
+import { createOutlookAdapter } from '@msgly/outlook';
 
 const app = express();
 
@@ -76,6 +80,67 @@ if (
   );
 }
 
+if (
+  process.env.DISCORD_APPLICATION_ID &&
+  process.env.DISCORD_BOT_TOKEN &&
+  process.env.DISCORD_PUBLIC_KEY
+) {
+  hub.register(
+    createDiscordAdapter({
+      applicationId: process.env.DISCORD_APPLICATION_ID,
+      botToken: process.env.DISCORD_BOT_TOKEN,
+      publicKey: process.env.DISCORD_PUBLIC_KEY,
+    }),
+  );
+}
+
+if (process.env.MSTEAMS_APP_ID && process.env.MSTEAMS_APP_PASSWORD) {
+  hub.register(
+    createMsTeamsAdapter({
+      appId: process.env.MSTEAMS_APP_ID,
+      appPassword: process.env.MSTEAMS_APP_PASSWORD,
+    }),
+  );
+}
+
+if (
+  process.env.GMAIL_CLIENT_ID &&
+  process.env.GMAIL_CLIENT_SECRET &&
+  process.env.GMAIL_REFRESH_TOKEN &&
+  process.env.GMAIL_EMAIL
+) {
+  hub.register(
+    createGmailAdapter({
+      clientId: process.env.GMAIL_CLIENT_ID,
+      clientSecret: process.env.GMAIL_CLIENT_SECRET,
+      refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+      emailAddress: process.env.GMAIL_EMAIL,
+      pushAuth: process.env.GMAIL_PUSH_TOKEN
+        ? { kind: 'token', token: process.env.GMAIL_PUSH_TOKEN }
+        : { kind: 'none' },
+    }),
+  );
+}
+
+if (
+  process.env.OUTLOOK_CLIENT_ID &&
+  process.env.OUTLOOK_CLIENT_SECRET &&
+  process.env.OUTLOOK_REFRESH_TOKEN &&
+  process.env.OUTLOOK_EMAIL &&
+  process.env.OUTLOOK_CLIENT_STATE
+) {
+  hub.register(
+    createOutlookAdapter({
+      clientId: process.env.OUTLOOK_CLIENT_ID,
+      clientSecret: process.env.OUTLOOK_CLIENT_SECRET,
+      refreshToken: process.env.OUTLOOK_REFRESH_TOKEN,
+      emailAddress: process.env.OUTLOOK_EMAIL,
+      clientState: process.env.OUTLOOK_CLIENT_STATE,
+      tenantId: process.env.OUTLOOK_TENANT_ID,
+    }),
+  );
+}
+
 // Listen for incoming messages from any channel
 hub.on('message', async (msg) => {
   console.log(
@@ -84,16 +149,30 @@ hub.on('message', async (msg) => {
   );
 
   if (msg.content.type === 'text') {
+    // Channels that need per-message routing context have to thread it through:
+    //  - LINE uses replyToken (free reply window)
+    //  - Discord uses interactionToken (PATCH the deferred ack)
+    //  - Microsoft Teams uses serviceUrl (regional Connector endpoint)
+    //  - Gmail uses threadId / messageId / subject / references (RFC 5322)
+    //  - Outlook uses messageId (Graph routes to /messages/{id}/reply)
+    const metadata: Record<string, unknown> = {};
+    if (msg.metadata?.replyToken) metadata.replyToken = msg.metadata.replyToken;
+    if (msg.metadata?.interactionToken) {
+      metadata.interactionToken = msg.metadata.interactionToken;
+    }
+    if (msg.metadata?.serviceUrl) metadata.serviceUrl = msg.metadata.serviceUrl;
+    if (msg.metadata?.threadId) metadata.threadId = msg.metadata.threadId;
+    if (msg.metadata?.messageId) metadata.messageId = msg.metadata.messageId;
+    if (msg.metadata?.subject) metadata.subject = msg.metadata.subject;
+    if (msg.metadata?.references) metadata.references = msg.metadata.references;
+
     try {
       await hub.send({
         channel: msg.channel,
         account: msg.account,
         contact: msg.contact,
         content: { type: 'text', text: `You said: ${msg.content.text}` },
-        // For LINE, pass through the reply token if we have it (free reply).
-        ...(msg.metadata?.replyToken
-          ? { metadata: { replyToken: msg.metadata.replyToken } }
-          : {}),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       });
     } catch (err) {
       console.error('Send failed:', err instanceof Error ? err.message : err);
@@ -129,7 +208,11 @@ async function main(): Promise<void> {
         '  - LINE_CHANNEL_ACCESS_TOKEN + LINE_CHANNEL_SECRET\n' +
         '  - MESSENGER_PAGE_TOKEN + META_APP_SECRET\n' +
         '  - INSTAGRAM_PAGE_TOKEN + META_APP_SECRET\n' +
-        '  - WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN + META_APP_SECRET\n',
+        '  - WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN + META_APP_SECRET\n' +
+        '  - DISCORD_APPLICATION_ID + DISCORD_BOT_TOKEN + DISCORD_PUBLIC_KEY\n' +
+        '  - MSTEAMS_APP_ID + MSTEAMS_APP_PASSWORD\n' +
+        '  - GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_EMAIL\n' +
+        '  - OUTLOOK_CLIENT_ID + OUTLOOK_CLIENT_SECRET + OUTLOOK_REFRESH_TOKEN + OUTLOOK_EMAIL + OUTLOOK_CLIENT_STATE\n',
     );
     process.exit(1);
   }

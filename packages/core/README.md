@@ -384,7 +384,7 @@ Server-side webhook handling needs the raw request bytes — most frameworks exp
 
 ## Documentation
 
-Full quickstart, connection guides, and architecture overview: https://github.com/AyushJain070401/chatterbox
+Full quickstart, connection guides, and architecture overview: https://github.com/AyushJain070401/msgly
 
 ## License
 

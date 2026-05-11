@@ -1,26 +1,28 @@
-# Chatterbox
+# Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, and LINE. One API, every channel.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, and Outlook. One API, every channel — chat and email together.
 
-[![CI](https://github.com/AyushJain070401/chatterbox/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/chatterbox/actions)
+[![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why
 
-Building a chatbot or notification system that works across multiple channels means learning five different APIs, five webhook formats, five different media-handling rules. Chatterbox collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
+Building a chatbot or notification system that works across multiple channels means learning five different APIs, five webhook formats, five different media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
 
 ## Status
 
-| Channel    | Package                          | Status     | Tests |
-| ---------- | -------------------------------- | ---------- | ----- |
-| Telegram   | `@chatterbox/telegram`        | Implemented | 7/7 |
-| LINE       | `@chatterbox/line`            | Implemented | 7/7 |
-| Messenger  | `@chatterbox/messenger`       | Implemented | 7/7 |
-| Instagram  | `@chatterbox/instagram`       | Implemented | 3/3 |
-| WhatsApp   | `@chatterbox/whatsapp`        | Implemented | 9/9 |
-| Core engine | `@chatterbox/core`           | Implemented | 12/12 |
-
-**45 tests across 6 packages, all passing. 0 type errors.**
+| Channel    | Package                          | Status     |
+| ---------- | -------------------------------- | ---------- |
+| Telegram   | `@msgly/telegram`        | Implemented |
+| LINE       | `@msgly/line`            | Implemented |
+| Messenger  | `@msgly/messenger`       | Implemented |
+| Instagram  | `@msgly/instagram`       | Implemented |
+| WhatsApp   | `@msgly/whatsapp`        | Implemented |
+| Discord    | `@msgly/discord`         | Implemented (HTTP Interactions) |
+| Microsoft Teams | `@msgly/msteams`    | Implemented (Bot Framework) |
+| Gmail      | `@msgly/gmail`           | Implemented (Pub/Sub push, text-only v1) |
+| Outlook / M365 | `@msgly/outlook`     | Implemented (Graph notifications, text-only v1) |
+| Core engine | `@msgly/core`           | Implemented |
 
 ## 60-second quickstart
 
@@ -31,8 +33,8 @@ If you've never used this library before, do this first. It uses Telegram (the e
 **1. Get the code and install:**
 
 ```bash
-unzip chatterbox.zip
-cd chatterbox
+unzip msgly.zip
+cd msgly
 pnpm install
 pnpm build
 ```
@@ -103,7 +105,7 @@ You should see `{"ok":true,"result":true,"description":"Webhook was set"}`.
 
 **7. Talk to your bot:** In Telegram, search for your bot by the username you set in step 2, send `hello`, and your bot replies `You said: hello`.
 
-That's it. You have a working chatbot built on Chatterbox.
+That's it. You have a working chatbot built on Msgly.
 
 ### What to do next
 
@@ -122,16 +124,16 @@ That's it. You have a working chatbot built on Chatterbox.
 
 ```bash
 # Install only the channels you need
-npm install @chatterbox/core @chatterbox/whatsapp @chatterbox/telegram
+npm install @msgly/core @msgly/whatsapp @msgly/telegram
 ```
 
 ## Quick start (multi-channel echo bot)
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@chatterbox/core';
-import { TelegramAdapter } from '@chatterbox/telegram';
-import { WhatsAppAdapter } from '@chatterbox/whatsapp';
+import { MessagingHub } from '@msgly/core';
+import { TelegramAdapter } from '@msgly/telegram';
+import { WhatsAppAdapter } from '@msgly/whatsapp';
 
 const hub = new MessagingHub();
 
@@ -211,7 +213,7 @@ const hub = new MessagingHub({
 The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle:
 
 ```typescript
-import { UnsupportedFeatureError } from '@chatterbox/core';
+import { UnsupportedFeatureError } from '@msgly/core';
 
 try {
   await hub.send({
@@ -318,7 +320,7 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${PUBLIC_
 Or programmatically (one-liner script):
 
 ```typescript
-import { TelegramAdapter } from '@chatterbox/telegram';
+import { TelegramAdapter } from '@msgly/telegram';
 const adapter = new TelegramAdapter({
   botToken: process.env.TELEGRAM_BOT_TOKEN!,
   webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
@@ -430,6 +432,94 @@ You need ONE Meta App that holds all three Meta channels.
 
 > **24-hour window**: free-form replies (text, media) only work within 24h of an inbound user message. Outside that window you must send a pre-approved **template** (`content: { type: 'template', templateName, language, variables }`). Templates are created and approved in Meta dashboard → WhatsApp → Message Templates.
 
+### Discord (15 minutes — slash commands + buttons)
+
+Discord on Msgly uses **HTTP Interactions** (slash commands and button clicks), not the Gateway WebSocket. If you need to react to every channel message rather than just commands, see the note in `packages/adapter-discord/README.md`.
+
+**Runtime requirement**: Node 20.13+ (for WebCrypto Ed25519). Bun, Deno, and Cloudflare Workers also supported.
+
+**1. Create an application.** [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application**.
+
+**2. Grab three values:**
+
+- General Information → **Application ID** → `DISCORD_APPLICATION_ID`
+- General Information → **Public Key** → `DISCORD_PUBLIC_KEY`
+- Bot tab → **Reset Token** → `DISCORD_BOT_TOKEN` (copy immediately — shown once)
+
+**3. Wire the interactions endpoint.** Still on General Information, paste `<PUBLIC_URL>/webhook/discord` into **Interactions Endpoint URL** and click **Save Changes**. Discord PINGs the URL — your server must be running so the adapter responds with `{"type":1}`.
+
+**4. Register a slash command.**
+
+```bash
+APP_ID="..."
+TOKEN="..."
+curl -X POST \
+  -H "Authorization: Bot $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"echo","description":"Echo a message","options":[{"name":"msg","description":"the message","type":3,"required":true}]}' \
+  "https://discord.com/api/v10/applications/$APP_ID/commands"
+```
+
+Use guild-scoped commands (`/applications/$APP_ID/guilds/$GUILD_ID/commands`) for instant testing — global commands can take an hour to propagate.
+
+**5. Invite the bot to a server.** OAuth2 → URL Generator → scopes: `bot`, `applications.commands`.
+
+**6. Test.** In a channel of that server, type `/echo msg:hello`. The bot replaces the "thinking..." placeholder with the echoed reply.
+
+### Microsoft Teams (20 minutes — needs Azure)
+
+Teams bots run on the **Bot Framework Connector** — register an Azure Bot resource, enable the Microsoft Teams channel, and point the messaging endpoint at this server. The adapter handles RS256 JWT verification and OAuth2 token caching automatically.
+
+**Prerequisite**: an Azure subscription (free tier covers development).
+
+**1. Register an Azure AD app.** [portal.azure.com](https://portal.azure.com) → **Azure Active Directory** → **App registrations** → **New registration** (multi-tenant if you want cross-org installs).
+
+- **Application (client) ID** → `MSTEAMS_APP_ID`
+- **Certificates & secrets** → **New client secret** → copy the **Value** immediately → `MSTEAMS_APP_PASSWORD`
+
+**2. Create an Azure Bot resource.** Portal → **Create a resource** → **Azure Bot** → Create.
+
+- Microsoft App ID: paste `MSTEAMS_APP_ID` ("Use existing app registration")
+- Pricing: F0 (free)
+
+**3. Set the messaging endpoint.** Your Bot resource → **Settings** → **Configuration** → Messaging endpoint: `<PUBLIC_URL>/webhook/msteams` → Save.
+
+**4. Enable the Teams channel.** Your Bot resource → **Channels** → click the Microsoft Teams tile → accept terms → Save.
+
+**5. Build a Teams app manifest.** [dev.teams.microsoft.com](https://dev.teams.microsoft.com) → **Apps** → **New app** → App features → **Bot** → select the bot from step 2. Publish to your org or use **Preview in Teams** for testing.
+
+**6. Test.** In Teams, message your bot. The echo handler responds.
+
+> **Reply requirement**: every inbound activity carries a regional `serviceUrl` in `msg.metadata.serviceUrl` — you must pass that through to `hub.send` (the example handler does this automatically). Without it, the adapter fails fast with `msteams_missing_service_url`.
+
+### Gmail (one-time ~30 minutes — Pub/Sub setup)
+
+Gmail receive flows over Google Cloud Pub/Sub push notifications, not a direct webhook. Setup is a one-time wire-up of three things: an OAuth client, a refresh token for the agent mailbox, and a Pub/Sub topic + push subscription pointing at this server.
+
+Full walkthrough (with curl commands) in [packages/adapter-gmail/README.md](packages/adapter-gmail/README.md). Short version:
+
+1. Google Cloud Console → enable Gmail API. Credentials → OAuth client ID. Copy `GMAIL_CLIENT_ID` + `GMAIL_CLIENT_SECRET`.
+2. Run the consent flow (the package README has the exact URL + curl). Copy `refresh_token` → `GMAIL_REFRESH_TOKEN`. Set `GMAIL_EMAIL` to the mailbox address.
+3. Pub/Sub → create topic → grant `gmail-api-push@system.gserviceaccount.com` Publisher → create push subscription with endpoint `<PUBLIC_URL>/webhook/gmail`. Use JWT auth (recommended) or `?token=<secret>` for simpler dev.
+4. From your app, call `adapter.watch('projects/your-project/topics/gmail-inbox')` once at deploy + daily via cron (watches expire after ~7 days).
+5. Send the agent an email. Your handler receives it.
+
+> **v1 scope**: text only, single bot mailbox per adapter. Attachments and multi-user routing are planned.
+
+### Outlook / Microsoft 365 (one-time ~20 minutes — Entra ID)
+
+Outlook receive uses Microsoft Graph change-notifications. Setup is OAuth + a one-time subscription create.
+
+Full walkthrough in [packages/adapter-outlook/README.md](packages/adapter-outlook/README.md). Short version:
+
+1. Entra ID → App registrations → New. Copy `OUTLOOK_CLIENT_ID`. Add a client secret → `OUTLOOK_CLIENT_SECRET`. API permissions → Delegated → `Mail.Read`, `Mail.Send`, `offline_access`.
+2. Run the consent flow (URL + curl in the package README). Copy `refresh_token` → `OUTLOOK_REFRESH_TOKEN`. Set `OUTLOOK_EMAIL` to the mailbox UPN.
+3. Pick a random `OUTLOOK_CLIENT_STATE` — the adapter uses this as a shared secret to validate notifications.
+4. From your app, call `adapter.createSubscription({ notificationUrl: '<PUBLIC_URL>/webhook/outlook' })` once. Graph performs a `validationToken` handshake (the adapter answers automatically), then notifications begin flowing.
+5. Schedule `adapter.renewSubscription(id)` daily — Graph caps message subscriptions at ~3 days.
+
+> **v1 scope**: text only, single bot mailbox per adapter. Attachments and multi-user routing are planned.
+
 ### Did something go wrong?
 
 #### "Credentials check failed" at startup
@@ -462,7 +552,7 @@ Three layers, defined by clean contracts:
 ```
 Developer's app
        ↓
-@chatterbox/core   ←  unified types, MessagingHub orchestrator,
+@msgly/core   ←  unified types, MessagingHub orchestrator,
        ↓                  retry, idempotency, capability checks
 Channel adapters       ←  one package per platform, each implements Adapter,
        ↓                  each ships its own verifyCredentials()

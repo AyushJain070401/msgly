@@ -18,6 +18,10 @@
     "@msgly/messenger": "workspace:*",
     "@msgly/instagram": "workspace:*",
     "@msgly/whatsapp": "workspace:*",
+    "@msgly/discord": "workspace:*",
+    "@msgly/msteams": "workspace:*",
+    "@msgly/gmail": "workspace:*",
+    "@msgly/outlook": "workspace:*",
     "express": "^4.19.0"
   },
   "devDependencies": {

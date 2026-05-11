@@ -388,6 +388,16 @@ function parseEmailAddress(header: string | undefined): {
 
 // ---------- RFC 5322 email construction ----------
 
+/**
+ * Strip CR / LF from any value that's going to land in a header. Without
+ * this, a malicious sender could put `\r\nBcc: evil@x.com` in their From
+ * (or any field that flows through metadata into our headers) and inject
+ * arbitrary headers into outbound mail.
+ */
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]/g, '');
+}
+
 function buildReplyEmail(opts: {
   from: string;
   to: string;
@@ -397,17 +407,32 @@ function buildReplyEmail(opts: {
   references?: string;
 }): string {
   const headers = [
-    `From: ${opts.from}`,
-    `To: ${opts.to}`,
-    `Subject: ${opts.subject}`,
+    `From: ${sanitizeHeaderValue(opts.from)}`,
+    `To: ${sanitizeHeaderValue(opts.to)}`,
+    `Subject: ${sanitizeHeaderValue(opts.subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=utf-8',
     'Content-Transfer-Encoding: 8bit',
     `Date: ${new Date().toUTCString()}`,
   ];
-  if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
-  if (opts.references) headers.push(`References: ${opts.references}`);
+  if (opts.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeaderValue(opts.inReplyTo)}`);
+  if (opts.references) headers.push(`References: ${sanitizeHeaderValue(opts.references)}`);
   return `${headers.join('\r\n')}\r\n\r\n${opts.body}`;
+}
+
+/**
+ * Length-leak resistant string equality. The length is still observable, but
+ * for high-entropy random tokens that doesn't meaningfully leak information.
+ * Use this for any shared-secret comparison so request timing can't be used
+ * to recover the secret one byte at a time.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 /** Strip "Re: " (case-insensitive) prefixes — used so we add exactly one. */
@@ -611,7 +636,8 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
       case 'token': {
         const provided = req.query['token'];
         const value = Array.isArray(provided) ? provided[0] : provided;
-        return value === config.pushAuth.token;
+        if (typeof value !== 'string') return false;
+        return constantTimeEqual(value, config.pushAuth.token);
       }
       case 'jwt': {
         const auth = headerValue(req.headers, 'authorization');

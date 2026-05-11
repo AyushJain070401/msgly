@@ -280,6 +280,71 @@ describe('createGmailAdapter', () => {
     expect(receipt.error?.code).toBe('gmail_unsupported_content');
   });
 
+  it('strips CRLF from header values to prevent injection', async () => {
+    let capturedSendBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      if (url.includes('/gmail/v1/users/me/messages/send')) {
+        capturedSendBody = JSON.parse((init?.body as string) ?? '{}');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'sent-id-1' }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const a = createGmailAdapter(baseConfig);
+
+    // Adversarial metadata: imagine an attacker-controlled subject / refs.
+    const receipt = await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'gmail',
+      account: { channel: 'gmail', channelAccountId: 'agent@acme.com' },
+      contact: {
+        channel: 'gmail',
+        channelUserId: 'victim@example.com\r\nBcc: leak@evil.com',
+      },
+      content: { type: 'text', text: 'hi' },
+      timestamp: new Date().toISOString(),
+      metadata: {
+        subject: 'Hello\r\nX-Injected: yes',
+        messageId: '<orig@example.com>\r\nReply-To: attacker@evil.com',
+      },
+    });
+
+    expect(receipt.status).toBe('sent');
+    const raw = capturedSendBody?.raw as string;
+    const decoded = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
+
+    // Security property: the injected payloads must NOT appear as header
+    // lines of their own (i.e. preceded by CRLF). They land inline in the
+    // value of whatever field they were injected into, which makes them
+    // invalid header-value content but harmless.
+    expect(decoded).not.toMatch(/\r\nBcc:/);
+    expect(decoded).not.toMatch(/\r\nX-Injected:/);
+    expect(decoded).not.toMatch(/\r\nReply-To:/);
+
+    // The sanitized values are concatenated onto the original header line.
+    expect(decoded).toContain('To: victim@example.comBcc: leak@evil.com\r\n');
+    expect(decoded).toContain('Subject: Re: HelloX-Injected: yes\r\n');
+
+    // No header line should ever contain a literal CR or LF inside it.
+    const headerSection = decoded.split('\r\n\r\n')[0]!;
+    for (const line of headerSection.split('\r\n')) {
+      expect(line).not.toMatch(/[\r\n]/);
+    }
+  });
+
   it('verifyCredentials returns hint when refreshToken is empty', async () => {
     const a = createGmailAdapter({ ...baseConfig, refreshToken: '' });
     const result = await a.verifyCredentials();

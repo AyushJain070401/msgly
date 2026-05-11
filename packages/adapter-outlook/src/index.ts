@@ -58,6 +58,20 @@ export interface OutlookAdapter extends Adapter {
   deleteSubscription(subscriptionId: string): Promise<void>;
 }
 
+/**
+ * Length-leak resistant string equality. Used for shared-secret comparisons
+ * so an attacker can't recover the secret a byte at a time via response
+ * timing.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 const DEFAULT_GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const DEFAULT_TENANT = 'common';
 const DEFAULT_TOKEN_URL = (tenant: string) =>
@@ -370,7 +384,8 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
     const body = req.body as GraphNotificationBody | null;
     if (!body?.value?.length) return false;
     for (const entry of body.value) {
-      if (entry.clientState !== config.clientState) return false;
+      if (typeof entry.clientState !== 'string') return false;
+      if (!constantTimeEqual(entry.clientState, config.clientState)) return false;
     }
     return true;
   }

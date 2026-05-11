@@ -12,15 +12,23 @@ import { createOutlookAdapter } from '@msgly/outlook';
 
 const app = express();
 
-// CRITICAL: capture the raw body before any JSON parser touches it.
-// Webhook signature verification needs the exact bytes the platform sent.
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      (req as Request & { rawBody?: Uint8Array }).rawBody = new Uint8Array(buf);
-    },
-  }),
-);
+// CRITICAL: capture the raw body for EVERY incoming POST regardless of
+// content-type. Different platforms send different types:
+//   - application/json: Discord, Teams, Gmail (Pub/Sub), Outlook notifications,
+//     and all the Meta-family channels
+//   - text/plain (or no content-type) with EMPTY body: Microsoft Graph's
+//     subscription validation handshake
+// Webhook signature verification needs the exact bytes that arrived. The
+// chain below captures the raw buffer in `req.rawBody` for any of these:
+const captureRaw = (req: Request & { rawBody?: Uint8Array }, _res: unknown, buf: Buffer): void => {
+  req.rawBody = new Uint8Array(buf);
+};
+app.use(express.json({ verify: captureRaw }));
+app.use(express.urlencoded({ extended: true, verify: captureRaw }));
+// Fallback: any content-type the two above didn't match (text/plain, missing
+// content-type, etc.). Body is exposed as a Buffer in req.body — adapters that
+// need parsed JSON have already gotten it from express.json above.
+app.use(express.raw({ type: '*/*', verify: captureRaw }));
 
 const hub = createHub();
 

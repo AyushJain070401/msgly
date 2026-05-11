@@ -224,6 +224,31 @@ Without any of these, the adapter still sends — just as a fresh email with sub
 | typing        | —         |
 | templates     | —         |
 
+## Production notes
+
+### Multi-instance deployments
+
+The "last seen historyId" is held in adapter memory. If you horizontally scale (multiple Node processes behind a load balancer), each instance has its own historyId tracker, and notifications routed to a different instance than the previous one will see a stale baseline.
+
+**Mitigations:**
+- Pin one process per inbox (sticky routing for the `/webhook/gmail` path), OR
+- Run a single worker for Gmail webhook handling (load balancer routes only one backend), OR
+- Wait for v2 which will accept a `historyIdStore` callback so you can persist to Redis/Postgres.
+
+In all cases, msgly's externalId-based idempotency means **duplicate fetches are deduplicated**, so the worst-case observable behavior is briefly missed messages (not duplicate emits). For a v1 deploy on a single instance, this is not a concern.
+
+### Push subscription authentication
+
+The three modes ranked by security:
+
+1. **`{ kind: 'jwt' }` (recommended for production)** — Pub/Sub signs each push with an OIDC token, we verify against Google's JWKS. Strongest. Requires enabling authentication on the Pub/Sub subscription.
+2. **`{ kind: 'token' }`** — A shared secret appended as `?token=...` to the push endpoint URL. The token lives in your Cloud Pub/Sub configuration and your env vars; if either leaks, an attacker can forge inbound notifications. Comparison is constant-time. **Acceptable for staging, not great for production.**
+3. **`{ kind: 'none' }`** — Skips verification entirely. **Local development only.** Anyone who knows your URL can forge inbound messages.
+
+### Header injection
+
+The adapter strips CR/LF from every header value (`From`, `To`, `Subject`, `In-Reply-To`, `References`) before constructing the outgoing RFC 5322 email. Even if upstream metadata is adversarial (malicious sender, compromised user input), the outgoing message can't have additional injected headers like `Bcc:` or `Reply-To:`.
+
 ## Common pitfalls
 
 - **No notifications arriving**: confirm the Pub/Sub topic grants `gmail-api-push@system.gserviceaccount.com` publish access. Confirm `users.watch()` returned a `historyId` (didn't error). Watches expire after ~7 days — schedule a daily re-call.

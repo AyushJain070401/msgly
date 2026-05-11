@@ -284,6 +284,37 @@ describe('createOutlookAdapter', () => {
     expect(msg.toRecipients?.[0]?.emailAddress?.address).toBe('alice@example.com');
   });
 
+  it('clientState comparison rejects single-byte mismatches with constant-time semantics', async () => {
+    const a = createOutlookAdapter(baseConfig);
+    // The real test for constant-time is timing-based; what we can test for
+    // is that one-character differences are rejected the same way as wholly
+    // different strings (and that empty / wrong-type values fail too).
+    expect(
+      await a.verifySignature({
+        headers: {},
+        rawBody: encode(''),
+        body: { value: [{ clientState: 'shared-secres' }] }, // last char differs
+        query: {},
+      }),
+    ).toBe(false);
+    expect(
+      await a.verifySignature({
+        headers: {},
+        rawBody: encode(''),
+        body: { value: [{ clientState: '' }] },
+        query: {},
+      }),
+    ).toBe(false);
+    expect(
+      await a.verifySignature({
+        headers: {},
+        rawBody: encode(''),
+        body: { value: [{ clientState: undefined as unknown as string }] },
+        query: {},
+      }),
+    ).toBe(false);
+  });
+
   it('verifyCredentials returns hint when clientState is missing', async () => {
     const a = createOutlookAdapter({ ...baseConfig, clientState: '' });
     const result = await a.verifyCredentials();

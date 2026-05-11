@@ -207,6 +207,22 @@ await hub.send({
 
 JWT verification (RS256) uses WebCrypto, native in Node 18+, Bun, Deno, Cloudflare Workers, and modern browsers. OAuth2 token requests use `fetch`, also native everywhere.
 
+## Production security notes
+
+### Trust model on outbound `serviceUrl`
+
+When you reply, the adapter POSTs (with your OAuth bearer token) to whatever `serviceUrl` came in on the inbound activity. The inbound JWT verifies that Microsoft signed the activity — so a forged activity with a custom serviceUrl is rejected. In normal operation this is safe.
+
+For defense-in-depth, the Microsoft Bot Framework SDKs maintain a whitelist of known Microsoft hosts (`*.botframework.com`, `*.skype.com`, `*.botservice.com`, regional variants). msgly does **not** do this in v1 — we trust the signed activity. If you're shipping to extra-paranoid customers, the layer above msgly can validate `msg.metadata.serviceUrl` against an allow-list before passing it through to `hub.send`.
+
+### JWT verification details
+
+- Algorithm pinned to RS256 (rejects `alg: none` attacks).
+- `iss` validated against `https://api.botframework.com` (override via `expectedIssuer` for emulator or government cloud).
+- `aud` validated against your `appId`.
+- `exp` and `nbf` checked with a 5-minute default clock skew (configurable via `clockSkewSec`).
+- JWKS cached for 24h with one-shot rotation when a token references an unknown `kid`.
+
 ## Common pitfalls
 
 - **"401 Unauthorized" on first inbound**: the JWKS is fetched once on the first request. Make sure your server can reach `login.botframework.com` outbound.

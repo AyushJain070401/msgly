@@ -1,6 +1,6 @@
 # @msgly/instagram
 
-> Instagram Direct adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Instagram DMs through the unified hub — text, image, video, quick replies, reactions. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
+> Instagram Direct adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive Instagram DMs through the unified hub — text, image, video, quick replies, reactions. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -169,7 +169,7 @@ Rendered as Instagram quick-reply chips. User tap → your `message` handler rec
 
 ## Documentation
 
-Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/chatterbox
+Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
 ## License
 

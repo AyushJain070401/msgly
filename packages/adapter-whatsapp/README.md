@@ -1,6 +1,6 @@
 # @msgly/whatsapp
 
-> WhatsApp Cloud API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive WhatsApp messages through the unified hub — text, all media types, interactive buttons, quick replies, reactions, and pre-approved templates. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
+> WhatsApp Cloud API adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive WhatsApp messages through the unified hub — text, all media types, interactive buttons, quick replies, reactions, and pre-approved templates. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -195,7 +195,7 @@ const receipts = adapter.parseStatuses(req.body);
 
 ## Documentation
 
-Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/chatterbox
+Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
 ## License
 

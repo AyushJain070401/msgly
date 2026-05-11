@@ -1,24 +1,24 @@
-# Chatterbox
+# Msgly
 
 > Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, and LINE. One API, every channel.
 
-[![CI](https://github.com/AyushJain070401/chatterbox/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/chatterbox/actions)
+[![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why
 
-Building a chatbot or notification system that works across multiple channels means learning five different APIs, five webhook formats, five different media-handling rules. Chatterbox collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
+Building a chatbot or notification system that works across multiple channels means learning five different APIs, five webhook formats, five different media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
 
 ## Status
 
 | Channel    | Package                          | Status     | Tests |
 | ---------- | -------------------------------- | ---------- | ----- |
-| Telegram   | `@chatterbox/telegram`        | Implemented | 7/7 |
-| LINE       | `@chatterbox/line`            | Implemented | 7/7 |
-| Messenger  | `@chatterbox/messenger`       | Implemented | 7/7 |
-| Instagram  | `@chatterbox/instagram`       | Implemented | 3/3 |
-| WhatsApp   | `@chatterbox/whatsapp`        | Implemented | 9/9 |
-| Core engine | `@chatterbox/core`           | Implemented | 12/12 |
+| Telegram   | `@msgly/telegram`        | Implemented | 7/7 |
+| LINE       | `@msgly/line`            | Implemented | 7/7 |
+| Messenger  | `@msgly/messenger`       | Implemented | 7/7 |
+| Instagram  | `@msgly/instagram`       | Implemented | 3/3 |
+| WhatsApp   | `@msgly/whatsapp`        | Implemented | 9/9 |
+| Core engine | `@msgly/core`           | Implemented | 12/12 |
 
 **45 tests across 6 packages, all passing. 0 type errors.**
 
@@ -31,8 +31,8 @@ If you've never used this library before, do this first. It uses Telegram (the e
 **1. Get the code and install:**
 
 ```bash
-unzip chatterbox.zip
-cd chatterbox
+unzip msgly.zip
+cd msgly
 pnpm install
 pnpm build
 ```
@@ -103,7 +103,7 @@ You should see `{"ok":true,"result":true,"description":"Webhook was set"}`.
 
 **7. Talk to your bot:** In Telegram, search for your bot by the username you set in step 2, send `hello`, and your bot replies `You said: hello`.
 
-That's it. You have a working chatbot built on Chatterbox.
+That's it. You have a working chatbot built on Msgly.
 
 ### What to do next
 
@@ -122,16 +122,16 @@ That's it. You have a working chatbot built on Chatterbox.
 
 ```bash
 # Install only the channels you need
-npm install @chatterbox/core @chatterbox/whatsapp @chatterbox/telegram
+npm install @msgly/core @msgly/whatsapp @msgly/telegram
 ```
 
 ## Quick start (multi-channel echo bot)
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@chatterbox/core';
-import { TelegramAdapter } from '@chatterbox/telegram';
-import { WhatsAppAdapter } from '@chatterbox/whatsapp';
+import { MessagingHub } from '@msgly/core';
+import { TelegramAdapter } from '@msgly/telegram';
+import { WhatsAppAdapter } from '@msgly/whatsapp';
 
 const hub = new MessagingHub();
 
@@ -211,7 +211,7 @@ const hub = new MessagingHub({
 The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle:
 
 ```typescript
-import { UnsupportedFeatureError } from '@chatterbox/core';
+import { UnsupportedFeatureError } from '@msgly/core';
 
 try {
   await hub.send({
@@ -318,7 +318,7 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${PUBLIC_
 Or programmatically (one-liner script):
 
 ```typescript
-import { TelegramAdapter } from '@chatterbox/telegram';
+import { TelegramAdapter } from '@msgly/telegram';
 const adapter = new TelegramAdapter({
   botToken: process.env.TELEGRAM_BOT_TOKEN!,
   webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
@@ -462,7 +462,7 @@ Three layers, defined by clean contracts:
 ```
 Developer's app
        ↓
-@chatterbox/core   ←  unified types, MessagingHub orchestrator,
+@msgly/core   ←  unified types, MessagingHub orchestrator,
        ↓                  retry, idempotency, capability checks
 Channel adapters       ←  one package per platform, each implements Adapter,
        ↓                  each ships its own verifyCredentials()

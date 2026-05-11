@@ -1,6 +1,6 @@
 # @msgly/telegram
 
-> Telegram Bot API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Telegram messages through the unified hub — text, media, location, inline buttons, quick replies, reactions, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
+> Telegram Bot API adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive Telegram messages through the unified hub — text, media, location, inline buttons, quick replies, reactions, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -170,7 +170,7 @@ const file = await adapter.downloadMedia({ kind: 'platform-id', value: msg.conte
 
 ## Documentation
 
-Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/chatterbox
+Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
 ## License
 

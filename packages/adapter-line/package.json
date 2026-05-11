@@ -1,7 +1,7 @@
 {
   "name": "@msgly/line",
-  "version": "0.2.0",
-  "description": "LINE Messaging API adapter for Chatterbox",
+  "version": "0.2.1",
+  "description": "LINE Messaging API adapter for Msgly",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -39,7 +39,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/AyushJain070401/chatterbox.git",
+    "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/adapter-line"
   },
   "keywords": [

@@ -1,7 +1,6 @@
-import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import { WhatsAppAdapter } from '../src/index.js';
+import { createWhatsAppAdapter } from '../src/index.js';
 
 const config = {
   phoneNumberId: '123456789',
@@ -10,23 +9,37 @@ const config = {
   verifyToken: 'verify-token',
 };
 
-const sign = (body: Buffer): string =>
-  'sha256=' +
-  createHmac('sha256', config.appSecret).update(body).digest('hex');
+const encode = (s: string) => new TextEncoder().encode(s);
 
-describe('WhatsAppAdapter', () => {
+async function signWhatsApp(body: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(config.appSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const buffer = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+  const sig = new Uint8Array(await globalThis.crypto.subtle.sign('HMAC', key, buffer));
+  let hex = '';
+  for (let i = 0; i < sig.length; i++) hex += sig[i]!.toString(16).padStart(2, '0');
+  return `sha256=${hex}`;
+}
+
+describe('createWhatsAppAdapter', () => {
   it('declares template capability', () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     expect(a.channel).toBe('whatsapp');
     expect(a.capabilities.templates).toBe(true);
   });
 
-  it('verifies webhook signature', () => {
-    const a = new WhatsAppAdapter(config);
-    const body = Buffer.from('{"object":"whatsapp_business_account"}');
+  it('verifies webhook signature', async () => {
+    const a = createWhatsAppAdapter(config);
+    const body = encode('{"object":"whatsapp_business_account"}');
+    const sig = await signWhatsApp(body);
     expect(
-      a.verifySignature({
-        headers: { 'x-hub-signature-256': sign(body) },
+      await a.verifySignature({
+        headers: { 'x-hub-signature-256': sig },
         rawBody: body,
         body: {},
         query: {},
@@ -35,7 +48,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('parses an inbound text message with profile name', async () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     const body = {
       object: 'whatsapp_business_account',
       entry: [
@@ -65,7 +78,7 @@ describe('WhatsAppAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -78,7 +91,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('parses an inbound image with platform-id reference', async () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     const body = {
       object: 'whatsapp_business_account',
       entry: [
@@ -109,7 +122,7 @@ describe('WhatsAppAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -125,7 +138,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('skips status webhooks during message parsing', async () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     const body = {
       object: 'whatsapp_business_account',
       entry: [
@@ -150,7 +163,7 @@ describe('WhatsAppAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -158,7 +171,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('parses status updates into delivery receipts', () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     const receipts = a.parseStatuses({
       object: 'whatsapp_business_account',
       entry: [
@@ -169,16 +182,8 @@ describe('WhatsAppAdapter', () => {
               field: 'messages',
               value: {
                 statuses: [
-                  {
-                    id: 'wamid.1',
-                    status: 'delivered',
-                    timestamp: '1700000000',
-                  },
-                  {
-                    id: 'wamid.2',
-                    status: 'read',
-                    timestamp: '1700000001',
-                  },
+                  { id: 'wamid.1', status: 'delivered', timestamp: '1700000000' },
+                  { id: 'wamid.2', status: 'read', timestamp: '1700000001' },
                   {
                     id: 'wamid.3',
                     status: 'failed',
@@ -200,9 +205,9 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('handles webhook GET challenge', () => {
-    const a = new WhatsAppAdapter(config);
+    const a = createWhatsAppAdapter(config);
     expect(
-      a.verifyWebhookChallenge({
+      a.verifyWebhookChallenge!({
         'hub.mode': 'subscribe',
         'hub.verify_token': 'verify-token',
         'hub.challenge': 'abc',
@@ -211,7 +216,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('verifyCredentials hint says where to find the phone number ID', async () => {
-    const a = new WhatsAppAdapter({
+    const a = createWhatsAppAdapter({
       phoneNumberId: '',
       accessToken: 'x',
       appSecret: 'y',
@@ -226,7 +231,7 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('verifyCredentials hint mentions 24h temporary token expiry', async () => {
-    const a = new WhatsAppAdapter({
+    const a = createWhatsAppAdapter({
       phoneNumberId: '123',
       accessToken: '',
       appSecret: 'y',

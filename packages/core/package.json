@@ -1,6 +1,6 @@
 {
   "name": "@msgly/core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Core engine for the messaging hub — unified message model, adapter contract, event bus",
   "license": "MIT",
   "type": "module",
@@ -25,15 +25,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@types/node": "^20.19.40",
-    "eventemitter3": "^5.0.4",
-    "pino": "^8.21.0",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3",
-    "vitest": "^1.6.1",
-    "zod": "^3.25.76"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.11.0",
     "tsup": "^8.0.0",

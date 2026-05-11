@@ -1,6 +1,6 @@
 # @msgly/instagram
 
-> Instagram Direct adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Instagram DMs through the unified `MessagingHub` interface — text, image, video, quick replies, reactions.
+> Instagram Direct adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Instagram DMs through the unified hub — text, image, video, quick replies, reactions. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -12,16 +12,18 @@ npm install @msgly/core @msgly/instagram
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { InstagramAdapter } from '@msgly/instagram';
+import { createHub } from '@msgly/core';
+import { createInstagramAdapter } from '@msgly/instagram';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new InstagramAdapter({
-  pageAccessToken: process.env.INSTAGRAM_PAGE_TOKEN!,
-  appSecret: process.env.META_APP_SECRET!,
-  verifyToken: process.env.META_VERIFY_TOKEN!,
-}));
+hub.register(
+  createInstagramAdapter({
+    pageAccessToken: process.env.INSTAGRAM_PAGE_TOKEN!,
+    appSecret: process.env.META_APP_SECRET!,
+    verifyToken: process.env.META_VERIFY_TOKEN!,
+  }),
+);
 
 await hub.connect({ throwOnFailure: true });
 
@@ -37,7 +39,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 const handlers = hub.createWebhookHandler();
 app.get('/webhook/:channel', handlers.get);
@@ -71,19 +73,19 @@ interface InstagramConfig {
 
 **Prerequisites:**
 
-1. An **Instagram Business** or **Creator** account (in the Instagram app: Settings → Account → Switch to Professional Account).
+1. An **Instagram Business** or **Creator** account (Instagram app: Settings → Account → Switch to Professional Account).
 2. A Facebook Page **linked** to that Instagram account (Page Settings → Linked Accounts → Instagram).
 3. A Meta App with the **Messenger product** already added (same App used by [@msgly/messenger](https://www.npmjs.com/package/@msgly/messenger)). All three Meta channels share one App and one App Secret.
 
 **Steps:**
 
-1. **Add Instagram to your App.** In your Meta App → Messenger → **Instagram Settings** tab → **Add or Remove Pages** → tick the Page linked to your IG account.
+1. **Add Instagram to your App.** Meta App → Messenger → **Instagram Settings** tab → **Add or Remove Pages** → tick the Page linked to your IG account.
 2. **Generate the IG-enabled token.** Same Instagram Settings tab → **Generate Token**. Set as `INSTAGRAM_PAGE_TOKEN`.
 3. **Subscribe webhooks.** Webhooks section on the Instagram Settings tab:
    - Callback URL: `<PUBLIC_URL>/webhook/instagram`
    - Verify token: same `META_VERIFY_TOKEN` as Messenger / WhatsApp
    - Subscribe to `messages`
-4. **Allow message access on the IG side.** Open the Instagram app: Settings → Privacy → Messages → **"Allow access to messages"** must be **ON**. Without this, your bot cannot receive DMs.
+4. **Allow message access on the IG side.** Instagram app: Settings → Privacy → Messages → **"Allow access to messages"** must be **ON**. Without this, your bot cannot receive DMs.
 5. **Test.** From a different IG account, send a DM to your Business account.
 
 ## Capabilities
@@ -102,15 +104,15 @@ interface InstagramConfig {
 | reactions     | ✓         |
 | typing        | —         |
 
-Instagram does not support audio sends, file attachments, or persistent buttons. Attempting any of these throws `UnsupportedFeatureError` from `@msgly/core`:
+Instagram does not support audio sends, file attachments, or persistent buttons. Attempts throw a `MsglyError` with `code: 'UnsupportedFeature'`:
 
 ```typescript
-import { UnsupportedFeatureError } from '@msgly/core';
+import { isMsglyError } from '@msgly/core';
 
 try {
   await hub.send({ channel: 'instagram', /* ... */ content: { type: 'audio', mediaRef } });
 } catch (err) {
-  if (err instanceof UnsupportedFeatureError) {
+  if (isMsglyError(err, 'UnsupportedFeature')) {
     // Instagram does not support audio sends
   }
 }
@@ -161,8 +163,8 @@ Rendered as Instagram quick-reply chips. User tap → your `message` handler rec
 - **Bot doesn't receive DMs**: the IG Business account must have **"Allow access to messages"** ON (Instagram app → Settings → Privacy → Messages).
 - **`(#10) Application does not have permission`**: the IG account isn't linked to the FB Page, or the Page isn't connected in the Instagram Settings tab of the Meta App.
 - **Webhook verify fails in console**: `META_VERIFY_TOKEN` mismatch, or server unreachable at the public URL when you click Verify.
-- **`Invalid signature`**: wrong `appSecret`, or your Express setup isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
-- **`(#100) Invalid parameter` on audio send**: Instagram does not support audio. Catch `UnsupportedFeatureError` before sending, or check `adapter.capabilities.media.audio === false`.
+- **`InvalidSignature`**: wrong `appSecret`, or your Express setup isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
+- **`(#100) Invalid parameter` on audio send**: Instagram does not support audio. Catch `UnsupportedFeature` errors before sending, or check `adapter.capabilities.media.audio === false`.
 - **Page token suddenly invalid**: short-lived tokens expire (~60 days in dev mode). Exchange for a long-lived token via `/oauth/access_token?grant_type=fb_exchange_token`, or use a System User token in Live mode.
 
 ## Documentation

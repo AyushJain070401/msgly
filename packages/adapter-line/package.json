@@ -1,6 +1,6 @@
 {
   "name": "@msgly/line",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "LINE Messaging API adapter for Chatterbox",
   "license": "MIT",
   "type": "module",
@@ -26,8 +26,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@msgly/core": "workspace:*",
-    "undici": "^6.6.0"
+    "@msgly/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

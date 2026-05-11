@@ -12,23 +12,26 @@ export interface MessageStore {
   hasExternalId(channel: string, externalId: string): Promise<boolean>;
 }
 
-/** Reference implementation. NOT for production. */
-export class InMemoryStore implements MessageStore {
-  private byId = new Map<string, UnifiedMessage>();
-  private externalIds = new Set<string>();
+/**
+ * Reference in-memory implementation. NOT for production — state is lost
+ * on process restart and there is no eviction.
+ */
+export function createInMemoryStore(): MessageStore {
+  const byId = new Map<string, UnifiedMessage>();
+  const externalIds = new Set<string>();
 
-  async saveMessage(message: UnifiedMessage): Promise<void> {
-    this.byId.set(message.id, message);
-    if (message.externalId) {
-      this.externalIds.add(`${message.channel}:${message.externalId}`);
-    }
-  }
-
-  async getMessage(id: string): Promise<UnifiedMessage | null> {
-    return this.byId.get(id) ?? null;
-  }
-
-  async hasExternalId(channel: string, externalId: string): Promise<boolean> {
-    return this.externalIds.has(`${channel}:${externalId}`);
-  }
+  return {
+    async saveMessage(message) {
+      byId.set(message.id, message);
+      if (message.externalId) {
+        externalIds.add(`${message.channel}:${message.externalId}`);
+      }
+    },
+    async getMessage(id) {
+      return byId.get(id) ?? null;
+    },
+    async hasExternalId(channel, externalId) {
+      return externalIds.has(`${channel}:${externalId}`);
+    },
+  };
 }

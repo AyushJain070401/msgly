@@ -1,6 +1,6 @@
 # @msgly/telegram
 
-> Telegram Bot API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Telegram messages through the unified `MessagingHub` interface — text, media, location, inline buttons, quick replies, reactions, typing indicators.
+> Telegram Bot API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Telegram messages through the unified hub — text, media, location, inline buttons, quick replies, reactions, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -12,15 +12,17 @@ npm install @msgly/core @msgly/telegram
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { TelegramAdapter } from '@msgly/telegram';
+import { createHub } from '@msgly/core';
+import { createTelegramAdapter } from '@msgly/telegram';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new TelegramAdapter({
-  botToken: process.env.TELEGRAM_BOT_TOKEN!,         // from @BotFather
-  webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET, // any random string
-}));
+hub.register(
+  createTelegramAdapter({
+    botToken: process.env.TELEGRAM_BOT_TOKEN!,
+    webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
+  }),
+);
 
 await hub.connect({ throwOnFailure: true });
 
@@ -36,7 +38,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 const handlers = hub.createWebhookHandler();
 app.get('/webhook/:channel', handlers.get);
@@ -55,10 +57,8 @@ interface TelegramConfig {
   /**
    * Optional secret token echoed back by Telegram in the
    * `X-Telegram-Bot-Api-Secret-Token` header on every webhook delivery.
-   *
    * Strongly recommended in production — without it, anyone who guesses
-   * your webhook URL can POST fake updates. The adapter logs a warning
-   * if you omit it.
+   * your webhook URL can POST fake updates.
    */
   webhookSecret?: string;
 
@@ -79,15 +79,13 @@ interface TelegramConfig {
 4. Register your webhook. With a public HTTPS endpoint at `<PUBLIC_URL>` (use ngrok or Cloudflare Tunnel locally):
 
    ```bash
-   TOKEN="$TELEGRAM_BOT_TOKEN"
-   SECRET="$TELEGRAM_WEBHOOK_SECRET"
-   curl "https://api.telegram.org/bot$TOKEN/setWebhook?url=<PUBLIC_URL>/webhook/telegram&secret_token=$SECRET"
+   curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=<PUBLIC_URL>/webhook/telegram&secret_token=$TELEGRAM_WEBHOOK_SECRET"
    ```
 
    Or programmatically — the adapter exposes a helper:
 
    ```typescript
-   const adapter = new TelegramAdapter({ botToken, webhookSecret });
+   const adapter = createTelegramAdapter({ botToken, webhookSecret });
    hub.register(adapter);
    await adapter.setWebhook('https://my-app.example.com/webhook/telegram');
    ```
@@ -143,7 +141,7 @@ await hub.send({
 });
 ```
 
-When the user taps a button, your `hub.on('message', ...)` handler will receive a text message whose `content.text` matches the button's `id` (Telegram callback-query value).
+When the user taps a button, your `hub.on('message', ...)` handler receives a text message whose `content.text` matches the button's `id`.
 
 ### Location
 
@@ -155,32 +153,20 @@ await hub.send({
 });
 ```
 
-### Uploading local media
+### Downloading a media attachment
 
 ```typescript
-import fs from 'node:fs';
-
 const adapter = hub.getAdapter('telegram');
-const ref = await adapter.uploadMedia({
-  data: fs.readFileSync('./photo.jpg'),
-  mimeType: 'image/jpeg',
-  filename: 'photo.jpg',
-});
-
-await hub.send({
-  channel: 'telegram',
-  account, contact,
-  content: { type: 'image', mediaRef: ref, caption: 'hello' },
-});
+const file = await adapter.downloadMedia({ kind: 'platform-id', value: msg.content.mediaRef.value });
+// file.data is a Uint8Array
 ```
 
 ## Common pitfalls
 
 - **Webhook not firing**: confirm registration with `curl https://api.telegram.org/bot${TOKEN}/getWebhookInfo`. Look at `last_error_message` and `pending_update_count`.
 - **`{"ok":false,"description":"Wrong response from the webhook"}`**: your server isn't returning 200 in time. The hub returns 200 only after it processes the body — keep your `hub.on('message')` handler fast or move work into a queue.
-- **Webhook signature rejected**: if you set `TELEGRAM_WEBHOOK_SECRET`, you must also pass `secret_token=...` in the `setWebhook` URL. Mismatched values cause the adapter to reject every delivery as `InvalidSignatureError`.
+- **Webhook signature rejected**: if you set `TELEGRAM_WEBHOOK_SECRET`, you must also pass `secret_token=...` in the `setWebhook` URL. Mismatched values cause `InvalidSignature`.
 - **ngrok URL keeps changing**: free ngrok rotates the URL on each restart. After ngrok restarts, you must re-run `setWebhook` with the new URL.
-- **Bot doesn't reply but logs show inbound**: check the server console for the actual API error — usually a malformed `chat_id` or a deleted chat.
 
 ## Documentation
 

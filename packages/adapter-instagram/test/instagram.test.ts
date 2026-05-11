@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { InstagramAdapter } from '../src/index.js';
+import { createInstagramAdapter } from '../src/index.js';
 
 const config = {
   pageAccessToken: 'ig-token',
@@ -8,9 +8,11 @@ const config = {
   verifyToken: 'verify-token',
 };
 
-describe('InstagramAdapter', () => {
+const encode = (s: string) => new TextEncoder().encode(s);
+
+describe('createInstagramAdapter', () => {
   it('declares correct channel and capabilities', () => {
-    const a = new InstagramAdapter(config);
+    const a = createInstagramAdapter(config);
     expect(a.channel).toBe('instagram');
     expect(a.capabilities.media.audio).toBe(false);
     expect(a.capabilities.media.file).toBe(false);
@@ -18,7 +20,7 @@ describe('InstagramAdapter', () => {
   });
 
   it('parses an inbound text message', async () => {
-    const a = new InstagramAdapter(config);
+    const a = createInstagramAdapter(config);
     const body = {
       object: 'instagram',
       entry: [
@@ -38,7 +40,7 @@ describe('InstagramAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -47,7 +49,7 @@ describe('InstagramAdapter', () => {
   });
 
   it('verifyCredentials gives an Instagram-specific hint when token missing', async () => {
-    const a = new InstagramAdapter({
+    const a = createInstagramAdapter({
       pageAccessToken: '',
       appSecret: 'x',
       verifyToken: 'y',

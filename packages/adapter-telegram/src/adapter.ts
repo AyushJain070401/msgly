@@ -1,17 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { request } from 'undici';
-
-import {
+import type {
   Adapter,
-  type AdapterCapabilities,
-  type ChannelName,
-  type CredentialsCheckResult,
-  type DeliveryReceipt,
-  type InboundMessage,
-  type MediaFile,
-  type MediaReference,
-  type OutboundMessage,
-  type WebhookRequest,
+  AdapterCapabilities,
+  CredentialsCheckResult,
+  DeliveryReceipt,
+  InboundMessage,
+  MediaFile,
+  MediaReference,
+  OutboundMessage,
+  WebhookRequest,
 } from '@msgly/core';
 
 export interface TelegramConfig {
@@ -23,42 +19,45 @@ export interface TelegramConfig {
   apiBase?: string;
 }
 
+/** Telegram adapter with channel-specific helpers in addition to the core contract. */
+export interface TelegramAdapter extends Adapter {
+  readonly channel: 'telegram';
+  /** Register a public webhook URL with Telegram. Call at deploy time. */
+  setWebhook(url: string): Promise<void>;
+  /** Remove the registered webhook (useful for local development). */
+  deleteWebhook(): Promise<void>;
+}
+
 const TELEGRAM_API = 'https://api.telegram.org';
 
-export class TelegramAdapter extends Adapter<TelegramConfig> {
-  readonly channel: ChannelName = 'telegram';
+const CAPABILITIES: AdapterCapabilities = {
+  text: true,
+  media: { image: true, video: true, audio: true, file: true },
+  interactive: { buttons: true, quickReplies: true },
+  templates: false,
+  reactions: true,
+  typing: true,
+};
 
-  readonly capabilities: AdapterCapabilities = {
-    text: true,
-    media: { image: true, video: true, audio: true, file: true },
-    interactive: { buttons: true, quickReplies: true },
-    templates: false,
-    reactions: true,
-    typing: true,
-  };
+function randomId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
-  constructor(config: TelegramConfig) {
-    super(config);
-    if (!config.webhookSecret) {
-      // Surface a clear warning. Telegram allows webhooks without a secret
-      // token — fine for local testing, NOT fine for production where
-      // anyone who guesses your webhook URL can POST fake updates.
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[chatterbox:telegram] TelegramAdapter created without webhookSecret — webhook signature verification is DISABLED. Set TelegramConfig.webhookSecret in production.',
-      );
-    }
+export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
+  if (!config.webhookSecret) {
+    console.warn(
+      '[msgly:telegram] createTelegramAdapter called without webhookSecret — webhook signature verification is DISABLED. Set TelegramConfig.webhookSecret in production.',
+    );
   }
 
-  private get apiBase(): string {
-    return this.config.apiBase ?? TELEGRAM_API;
-  }
+  const apiBase = (): string => config.apiBase ?? TELEGRAM_API;
+  const apiUrl = (method: string): string =>
+    `${apiBase()}/bot${config.botToken}/${method}`;
 
-  private apiUrl(method: string): string {
-    return `${this.apiBase}/bot${this.config.botToken}/${method}`;
-  }
-
-  async send(message: OutboundMessage): Promise<DeliveryReceipt> {
+  async function send(message: OutboundMessage): Promise<DeliveryReceipt> {
     const chatId = message.contact.channelUserId;
     let method: string;
     let payload: Record<string, unknown>;
@@ -112,26 +111,23 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
           text: message.content.text,
           reply_markup: {
             inline_keyboard: [
-              buttons.map((b) => ({
-                text: b.label,
-                callback_data: b.id,
-              })),
+              buttons.map((b) => ({ text: b.label, callback_data: b.id })),
             ],
           },
         };
         break;
       }
       default:
-        throw new Error(`Unsupported content type for Telegram`);
+        throw new Error('Unsupported content type for Telegram');
     }
 
-    const res = await request(this.apiUrl(method), {
+    const res = await fetch(apiUrl(method), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    const data = (await res.body.json()) as {
+    const data = (await res.json()) as {
       ok: boolean;
       result?: { message_id: number };
       description?: string;
@@ -142,7 +138,10 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
         messageId: message.id,
         status: 'failed',
         timestamp: new Date().toISOString(),
-        error: { code: 'telegram_api_error', message: data.description ?? 'unknown' },
+        error: {
+          code: `telegram_api_error_${res.status}`,
+          message: data.description ?? 'unknown',
+        },
       };
     }
 
@@ -154,37 +153,7 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
     };
   }
 
-  async handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
-    const update = req.body as TelegramUpdate;
-    if (!update.message) return [];
-
-    const m = update.message;
-    const content = this.parseContent(m);
-    if (!content) return [];
-
-    return [
-      {
-        id: randomUUID(),
-        externalId: m.message_id.toString(),
-        channel: 'telegram',
-        direction: 'inbound',
-        account: { channel: 'telegram', channelAccountId: 'self' },
-        contact: {
-          channel: 'telegram',
-          channelUserId: m.chat.id.toString(),
-          displayName:
-            m.from?.first_name ??
-            m.chat.first_name ??
-            m.chat.title,
-        },
-        content,
-        timestamp: new Date(m.date * 1000).toISOString(),
-        raw: update,
-      },
-    ];
-  }
-
-  private parseContent(m: TelegramMessage): InboundMessage['content'] | null {
+  function parseContent(m: TelegramMessage): InboundMessage['content'] | null {
     if (m.text) return { type: 'text', text: m.text };
     if (m.photo && m.photo.length > 0) {
       const largest = m.photo[m.photo.length - 1];
@@ -216,41 +185,60 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
     return null;
   }
 
-  verifySignature(req: WebhookRequest): boolean {
-    if (!this.config.webhookSecret) return true; // not configured
-    const header = req.headers['x-telegram-bot-api-secret-token'];
-    return header === this.config.webhookSecret;
+  async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
+    const update = req.body as TelegramUpdate;
+    if (!update.message) return [];
+
+    const m = update.message;
+    const content = parseContent(m);
+    if (!content) return [];
+
+    return [
+      {
+        id: randomId(),
+        externalId: m.message_id.toString(),
+        channel: 'telegram',
+        direction: 'inbound',
+        account: { channel: 'telegram', channelAccountId: 'self' },
+        contact: {
+          channel: 'telegram',
+          channelUserId: m.chat.id.toString(),
+          displayName: m.from?.first_name ?? m.chat.first_name ?? m.chat.title,
+        },
+        content,
+        timestamp: new Date(m.date * 1000).toISOString(),
+        raw: update,
+      },
+    ];
   }
 
-  async uploadMedia(_file: MediaFile): Promise<MediaReference> {
-    // Telegram accepts public URLs directly in send* calls, so a "real" upload
-    // is rarely needed. Implement multipart upload here when you need it.
+  async function verifySignature(req: WebhookRequest): Promise<boolean> {
+    if (!config.webhookSecret) return true; // not configured
+    const header = req.headers['x-telegram-bot-api-secret-token'];
+    return header === config.webhookSecret;
+  }
+
+  async function uploadMedia(_file: MediaFile): Promise<MediaReference> {
     throw new Error('uploadMedia not yet implemented for Telegram');
   }
 
-  async downloadMedia(ref: MediaReference): Promise<MediaFile> {
+  async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
     if (ref.kind !== 'platform-id') {
       throw new Error('Telegram downloadMedia requires a platform-id ref');
     }
-    const fileInfoRes = await request(
-      `${this.apiUrl('getFile')}?file_id=${ref.value}`,
-    );
-    const fileInfo = (await fileInfoRes.body.json()) as {
+    const fileInfoRes = await fetch(`${apiUrl('getFile')}?file_id=${ref.value}`);
+    const fileInfo = (await fileInfoRes.json()) as {
       ok: boolean;
       result: { file_path: string };
     };
-    const fileUrl = `${this.apiBase}/file/bot${this.config.botToken}/${fileInfo.result.file_path}`;
-    const fileRes = await request(fileUrl);
-    const buffer = Buffer.from(await fileRes.body.arrayBuffer());
-    return { data: buffer, mimeType: ref.mimeType ?? 'application/octet-stream' };
+    const fileUrl = `${apiBase()}/file/bot${config.botToken}/${fileInfo.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    const data = new Uint8Array(await fileRes.arrayBuffer());
+    return { data, mimeType: ref.mimeType ?? 'application/octet-stream' };
   }
 
-  /**
-   * Verify the bot token by calling getMe. Returns the bot's username on
-   * success or a precise hint on failure.
-   */
-  async verifyCredentials(): Promise<CredentialsCheckResult> {
-    if (!this.config.botToken) {
+  async function verifyCredentials(): Promise<CredentialsCheckResult> {
+    if (!config.botToken) {
       return {
         ok: false,
         reason: 'unauthorized',
@@ -258,11 +246,9 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
       };
     }
     try {
-      const res = await request(this.apiUrl('getMe'));
+      const res = await fetch(apiUrl('getMe'));
 
-      // Status-based fast paths — handle BEFORE attempting JSON parse so a
-      // proxy returning an HTML error page doesn't crash here.
-      if (res.statusCode === 401 || res.statusCode === 404) {
+      if (res.status === 401 || res.status === 404) {
         return {
           ok: false,
           reason: 'unauthorized',
@@ -270,7 +256,7 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
         };
       }
 
-      const data = (await res.body.json().catch(() => null)) as {
+      const data = (await res.json().catch(() => null)) as {
         ok: boolean;
         result?: { username: string; first_name: string };
         description?: string;
@@ -280,7 +266,7 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
         return {
           ok: false,
           reason: 'unknown',
-          hint: `Telegram getMe returned a non-JSON response (status ${res.statusCode}). Are you behind a proxy that's blocking api.telegram.org?`,
+          hint: `Telegram getMe returned a non-JSON response (status ${res.status}). Are you behind a proxy that's blocking api.telegram.org?`,
         };
       }
       if ((data.description ?? '').includes('Unauthorized')) {
@@ -309,33 +295,36 @@ export class TelegramAdapter extends Adapter<TelegramConfig> {
     }
   }
 
-  /**
-   * Convenience helper to register your public webhook URL with Telegram.
-   * Call this once at deploy time (or whenever the URL changes).
-   *
-   * @example
-   *   await adapter.setWebhook('https://my-app.example.com/webhook/telegram')
-   */
-  async setWebhook(url: string): Promise<void> {
+  async function setWebhook(url: string): Promise<void> {
     const payload: Record<string, unknown> = { url };
-    if (this.config.webhookSecret) {
-      payload['secret_token'] = this.config.webhookSecret;
-    }
-    const res = await request(this.apiUrl('setWebhook'), {
+    if (config.webhookSecret) payload['secret_token'] = config.webhookSecret;
+    const res = await fetch(apiUrl('setWebhook'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = (await res.body.json()) as { ok: boolean; description?: string };
+    const data = (await res.json()) as { ok: boolean; description?: string };
     if (!data.ok) {
       throw new Error(`Telegram setWebhook failed: ${data.description ?? 'unknown'}`);
     }
   }
 
-  /** Remove the registered webhook (useful for local development). */
-  async deleteWebhook(): Promise<void> {
-    await request(this.apiUrl('deleteWebhook'), { method: 'POST' });
+  async function deleteWebhook(): Promise<void> {
+    await fetch(apiUrl('deleteWebhook'), { method: 'POST' });
   }
+
+  return {
+    channel: 'telegram',
+    capabilities: CAPABILITIES,
+    send,
+    handleWebhook,
+    verifySignature,
+    uploadMedia,
+    downloadMedia,
+    verifyCredentials,
+    setWebhook,
+    deleteWebhook,
+  };
 }
 
 // ---------- Telegram payload shapes (subset) ----------

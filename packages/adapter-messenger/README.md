@@ -1,6 +1,6 @@
 # @msgly/messenger
 
-> Facebook Messenger adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Messenger messages through the unified `MessagingHub` interface — text, all media types, buttons, quick replies, typing indicators.
+> Facebook Messenger adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive Messenger messages through the unified hub — text, all media types, buttons, quick replies, typing indicators. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -12,16 +12,18 @@ npm install @msgly/core @msgly/messenger
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { MessengerAdapter } from '@msgly/messenger';
+import { createHub } from '@msgly/core';
+import { createMessengerAdapter } from '@msgly/messenger';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new MessengerAdapter({
-  pageAccessToken: process.env.MESSENGER_PAGE_TOKEN!,
-  appSecret: process.env.META_APP_SECRET!,
-  verifyToken: process.env.META_VERIFY_TOKEN!,
-}));
+hub.register(
+  createMessengerAdapter({
+    pageAccessToken: process.env.MESSENGER_PAGE_TOKEN!,
+    appSecret: process.env.META_APP_SECRET!,
+    verifyToken: process.env.META_VERIFY_TOKEN!,
+  }),
+);
 
 await hub.connect({ throwOnFailure: true });
 
@@ -37,7 +39,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 const handlers = hub.createWebhookHandler();
 app.get('/webhook/:channel', handlers.get);
@@ -69,13 +71,13 @@ interface MessengerConfig {
 
 ## Setup (15 minutes)
 
-**Prerequisite:** a Facebook Page. Create one at [facebook.com/pages/create](https://facebook.com/pages/create) if you don't have one.
+**Prerequisite:** a Facebook Page. Create one at [facebook.com/pages/create](https://facebook.com/pages/create) if needed.
 
 1. **Create a Meta App** at [developers.facebook.com](https://developers.facebook.com) → Create App → Business type.
 2. **App Secret.** Settings → Basic → Show next to App Secret → `META_APP_SECRET`.
-3. **Verify token.** Any random string → `META_VERIFY_TOKEN`. The same value must be configured in the Meta webhook subscription form.
+3. **Verify token.** Any random string → `META_VERIFY_TOKEN`. Same value must be configured in Meta's webhook form.
 4. **Add the Messenger product** → Set up.
-5. **Generate a Page token.** Messenger → **Settings** → "Generate Tokens" → select your Page → **Generate Token**. Copy it immediately — shown only once. Set as `MESSENGER_PAGE_TOKEN`.
+5. **Generate a Page token.** Messenger → **Settings** → "Generate Tokens" → select your Page → **Generate Token**. Copy immediately — shown only once. Set as `MESSENGER_PAGE_TOKEN`.
 6. **Webhook subscription.** Same Settings page → "Webhooks":
    - Callback URL: `<PUBLIC_URL>/webhook/messenger`
    - Verify token: same as `META_VERIFY_TOKEN`
@@ -88,7 +90,7 @@ interface MessengerConfig {
 
 Page tokens generated in the dashboard are short-lived in **Development mode** (~60 days). Two production paths:
 
-- **Exchange for long-lived**:
+- **Exchange for long-lived:**
   ```
   GET /oauth/access_token
     ?grant_type=fb_exchange_token
@@ -109,12 +111,10 @@ Page tokens generated in the dashboard are short-lived in **Development mode** (
 | file          | ✓         |
 | location      | ✓         |
 | buttons       | ✓         |
-| quick replies | ✓         |
+| quick replies | ✓ (max 13, 20-char labels) |
 | templates     | —         |
 | reactions     | —         |
 | typing        | ✓         |
-
-Messenger quick replies max 13 items, 20-char labels. The adapter truncates silently to fit.
 
 ## Sending examples
 
@@ -148,14 +148,14 @@ await hub.send({
 });
 ```
 
-User taps → your `message` event fires with `content.text` equal to the button's `id` (delivered via the Messenger payload field).
+User taps → your `message` event fires with `content.text` equal to the button's `id`.
 
 ## Common pitfalls
 
 - **Webhook verify fails in console**: `META_VERIFY_TOKEN` in code must match the value typed into the Meta form **byte-for-byte**. Server must be reachable at the public URL the moment you click Verify.
 - **Bot replies arrive but user doesn't see them**: the App must be subscribed to the Page. Webhooks section → Subscribe next to the Page.
-- **`Invalid signature`**: wrong `appSecret`, or your Express app isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
-- **`(#10) Application does not have permission for this action`**: in Development mode, only Page admins/devs/testers can message the bot. Add the testing user under App Roles, or switch the App to Live mode.
+- **`InvalidSignature`**: wrong `appSecret`, or your Express app isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
+- **`(#10) Application does not have permission for this action`**: in Development mode, only Page admins/devs/testers can message the bot. Add the user under App Roles, or switch the App to Live mode.
 - **Page token suddenly invalid**: short-lived tokens expire (~60 days in dev mode). See [Token expiry](#token-expiry).
 
 ## Documentation

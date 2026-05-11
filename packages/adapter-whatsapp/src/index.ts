@@ -1,19 +1,15 @@
-import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import { request, FormData } from 'undici';
-
-import {
+import type {
   Adapter,
-  type AdapterCapabilities,
-  type ChannelName,
-  type CredentialsCheckResult,
-  type DeliveryReceipt,
-  type DeliveryStatus,
-  type InboundMessage,
-  type MediaFile,
-  type MediaReference,
-  type MessageContent,
-  type OutboundMessage,
-  type WebhookRequest,
+  AdapterCapabilities,
+  CredentialsCheckResult,
+  DeliveryReceipt,
+  DeliveryStatus,
+  InboundMessage,
+  MediaFile,
+  MediaReference,
+  MessageContent,
+  OutboundMessage,
+  WebhookRequest,
 } from '@msgly/core';
 
 export interface WhatsAppConfig {
@@ -30,12 +26,236 @@ export interface WhatsAppConfig {
   apiVersion?: string;
 }
 
+export interface WhatsAppAdapter extends Adapter {
+  readonly channel: 'whatsapp';
+  /** Translate a WhatsApp status webhook into DeliveryReceipts. */
+  parseStatuses(rawBody: unknown): DeliveryReceipt[];
+}
+
 const GRAPH_API = 'https://graph.facebook.com';
+
+const CAPABILITIES: AdapterCapabilities = {
+  text: true,
+  media: { image: true, video: true, audio: true, file: true },
+  interactive: { buttons: true, quickReplies: true },
+  templates: true,
+  reactions: true,
+  typing: false,
+};
+
+function randomId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function hmacSha256Hex(secret: string, message: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = new Uint8Array(
+    await globalThis.crypto.subtle.sign('HMAC', key, message as BufferSource),
+  );
+  let out = '';
+  for (let i = 0; i < sig.length; i++) out += sig[i]!.toString(16).padStart(2, '0');
+  return out;
+}
+
+function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function mapStatus(status: string): DeliveryStatus | null {
+  switch (status) {
+    case 'sent':
+      return 'sent';
+    case 'delivered':
+      return 'delivered';
+    case 'read':
+      return 'read';
+    case 'failed':
+      return 'failed';
+    default:
+      return null;
+  }
+}
+
+function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
+  switch (content.type) {
+    case 'text':
+      return { type: 'text', text: { body: content.text } };
+
+    case 'image':
+    case 'video':
+    case 'audio': {
+      const mediaPayload =
+        content.mediaRef.kind === 'platform-id'
+          ? { id: content.mediaRef.value }
+          : { link: content.mediaRef.value };
+      return {
+        type: content.type,
+        [content.type]: {
+          ...mediaPayload,
+          ...(content.caption && content.type !== 'audio'
+            ? { caption: content.caption }
+            : {}),
+        },
+      };
+    }
+
+    case 'file': {
+      const docPayload =
+        content.mediaRef.kind === 'platform-id'
+          ? { id: content.mediaRef.value }
+          : { link: content.mediaRef.value };
+      return {
+        type: 'document',
+        document: {
+          ...docPayload,
+          ...(content.caption ? { caption: content.caption } : {}),
+        },
+      };
+    }
+
+    case 'location':
+      return {
+        type: 'location',
+        location: {
+          latitude: content.latitude,
+          longitude: content.longitude,
+          ...(content.name ? { name: content.name } : {}),
+          ...(content.address ? { address: content.address } : {}),
+        },
+      };
+
+    case 'interactive':
+      return {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: { text: content.text },
+          action: {
+            buttons: content.buttons.slice(0, 3).map((b) => ({
+              type: 'reply',
+              reply: { id: b.id, title: b.label.slice(0, 20) },
+            })),
+          },
+        },
+      };
+
+    case 'template':
+      return {
+        type: 'template',
+        template: {
+          name: content.templateName,
+          language: { code: content.language },
+          ...(content.variables
+            ? {
+                components: [
+                  {
+                    type: 'body',
+                    parameters: Object.values(content.variables).map((v) => ({
+                      type: 'text',
+                      text: v,
+                    })),
+                  },
+                ],
+              }
+            : {}),
+        },
+      };
+
+    default:
+      throw new Error('Unsupported content type for WhatsApp');
+  }
+}
+
+function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
+  switch (m.type) {
+    case 'text':
+      return m.text?.body ? { type: 'text', text: m.text.body } : null;
+    case 'image':
+      return m.image
+        ? {
+            type: 'image',
+            mediaRef: {
+              kind: 'platform-id',
+              value: m.image.id,
+              mimeType: m.image.mime_type,
+            },
+            ...(m.image.caption ? { caption: m.image.caption } : {}),
+          }
+        : null;
+    case 'video':
+      return m.video
+        ? {
+            type: 'video',
+            mediaRef: {
+              kind: 'platform-id',
+              value: m.video.id,
+              mimeType: m.video.mime_type,
+            },
+            ...(m.video.caption ? { caption: m.video.caption } : {}),
+          }
+        : null;
+    case 'audio':
+      return m.audio
+        ? {
+            type: 'audio',
+            mediaRef: {
+              kind: 'platform-id',
+              value: m.audio.id,
+              mimeType: m.audio.mime_type,
+            },
+          }
+        : null;
+    case 'document':
+      return m.document
+        ? {
+            type: 'file',
+            mediaRef: {
+              kind: 'platform-id',
+              value: m.document.id,
+              mimeType: m.document.mime_type,
+            },
+            ...(m.document.caption ? { caption: m.document.caption } : {}),
+          }
+        : null;
+    case 'location':
+      return m.location
+        ? {
+            type: 'location',
+            latitude: m.location.latitude,
+            longitude: m.location.longitude,
+            ...(m.location.name ? { name: m.location.name } : {}),
+            ...(m.location.address ? { address: m.location.address } : {}),
+          }
+        : null;
+    case 'button':
+    case 'interactive':
+      if (m.button?.text) return { type: 'text', text: m.button.text };
+      if (m.interactive?.button_reply?.title)
+        return { type: 'text', text: m.interactive.button_reply.title };
+      return null;
+    default:
+      return null;
+  }
+}
 
 /**
  * WhatsApp Cloud API adapter.
  *
- * Key concepts the developer must know:
+ * Key concepts:
  *
  *  1. 24-hour customer service window: free-form messages (text/media)
  *     can only be sent within 24h of a user's last inbound message. Outside
@@ -43,70 +263,47 @@ const GRAPH_API = 'https://graph.facebook.com';
  *
  *  2. Templates: created and approved in the Meta dashboard. Use them
  *     via content type "template" with templateName, language, and
- *     variables. We pass variables as positional body parameters.
+ *     variables. Variables are sent as positional body parameters.
  *
- *  3. Status callbacks: Meta sends sent/delivered/read/failed status
- *     updates as separate webhook events. We surface these as DeliveryReceipts
- *     via the `delivery` event on MessagingHub — see processStatuses.
+ *  3. Status callbacks: WhatsApp sends sent/delivered/read/failed updates
+ *     as separate webhook events. Use `parseStatuses(rawBody)` if you want
+ *     granular delivery tracking.
  *
- *  4. Media: WhatsApp requires uploading media through their /media
- *     endpoint (returns an id) OR providing a public URL. We support both.
+ *  4. Media: WhatsApp accepts either an uploaded media id (via uploadMedia)
+ *     or a public URL passed inline.
  */
-export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
-  readonly channel: ChannelName = 'whatsapp';
+export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
+  const apiBase = (): string => config.apiBase ?? GRAPH_API;
+  const apiVersion = (): string => config.apiVersion ?? 'v20.0';
+  const sendUrl = (): string =>
+    `${apiBase()}/${apiVersion()}/${config.phoneNumberId}/messages`;
+  const mediaUrl = (): string =>
+    `${apiBase()}/${apiVersion()}/${config.phoneNumberId}/media`;
+  const authHeaders = (): Record<string, string> => ({
+    authorization: `Bearer ${config.accessToken}`,
+    'content-type': 'application/json',
+  });
 
-  readonly capabilities: AdapterCapabilities = {
-    text: true,
-    media: { image: true, video: true, audio: true, file: true },
-    interactive: { buttons: true, quickReplies: true },
-    templates: true,
-    reactions: true,
-    typing: false,
-  };
-
-  private get apiBase(): string {
-    return this.config.apiBase ?? GRAPH_API;
-  }
-
-  private get apiVersion(): string {
-    return this.config.apiVersion ?? 'v20.0';
-  }
-
-  private get sendUrl(): string {
-    return `${this.apiBase}/${this.apiVersion}/${this.config.phoneNumberId}/messages`;
-  }
-
-  private get mediaUrl(): string {
-    return `${this.apiBase}/${this.apiVersion}/${this.config.phoneNumberId}/media`;
-  }
-
-  private authHeaders(): Record<string, string> {
-    return {
-      'authorization': `Bearer ${this.config.accessToken}`,
-      'content-type': 'application/json',
-    };
-  }
-
-  async send(message: OutboundMessage): Promise<DeliveryReceipt> {
+  async function send(message: OutboundMessage): Promise<DeliveryReceipt> {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
       to: message.contact.channelUserId,
-      ...this.toWhatsAppMessage(message.content),
+      ...toWhatsAppMessage(message.content),
     };
 
-    const res = await request(this.sendUrl, {
+    const res = await fetch(sendUrl(), {
       method: 'POST',
-      headers: this.authHeaders(),
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     });
 
-    const data = (await res.body.json().catch(() => ({}))) as {
+    const data = (await res.json().catch(() => ({}))) as {
       messages?: Array<{ id: string }>;
       error?: { message?: string; code?: number };
     };
 
-    if (res.statusCode >= 200 && res.statusCode < 300 && data.messages?.[0]) {
+    if (res.status >= 200 && res.status < 300 && data.messages?.[0]) {
       return {
         messageId: message.id,
         externalId: data.messages[0].id,
@@ -120,136 +317,38 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
       status: 'failed',
       timestamp: new Date().toISOString(),
       error: {
-        code: `wa_${data.error?.code ?? res.statusCode}`,
+        code: `wa_${data.error?.code ?? res.status}`,
         message: data.error?.message ?? 'unknown',
       },
     };
   }
 
-  private toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
-    switch (content.type) {
-      case 'text':
-        return { type: 'text', text: { body: content.text } };
-
-      case 'image':
-      case 'video':
-      case 'audio': {
-        const mediaPayload =
-          content.mediaRef.kind === 'platform-id'
-            ? { id: content.mediaRef.value }
-            : { link: content.mediaRef.value };
-        return {
-          type: content.type,
-          [content.type]: {
-            ...mediaPayload,
-            ...(content.caption && content.type !== 'audio'
-              ? { caption: content.caption }
-              : {}),
-          },
-        };
-      }
-
-      case 'file': {
-        const docPayload =
-          content.mediaRef.kind === 'platform-id'
-            ? { id: content.mediaRef.value }
-            : { link: content.mediaRef.value };
-        return {
-          type: 'document',
-          document: {
-            ...docPayload,
-            ...(content.caption ? { caption: content.caption } : {}),
-          },
-        };
-      }
-
-      case 'location':
-        return {
-          type: 'location',
-          location: {
-            latitude: content.latitude,
-            longitude: content.longitude,
-            ...(content.name ? { name: content.name } : {}),
-            ...(content.address ? { address: content.address } : {}),
-          },
-        };
-
-      case 'interactive':
-        return {
-          type: 'interactive',
-          interactive: {
-            type: 'button',
-            body: { text: content.text },
-            action: {
-              buttons: content.buttons.slice(0, 3).map((b) => ({
-                type: 'reply',
-                reply: { id: b.id, title: b.label.slice(0, 20) },
-              })),
-            },
-          },
-        };
-
-      case 'template':
-        return {
-          type: 'template',
-          template: {
-            name: content.templateName,
-            language: { code: content.language },
-            ...(content.variables
-              ? {
-                  components: [
-                    {
-                      type: 'body',
-                      parameters: Object.values(content.variables).map((v) => ({
-                        type: 'text',
-                        text: v,
-                      })),
-                    },
-                  ],
-                }
-              : {}),
-          },
-        };
-
-      default:
-        throw new Error(`Unsupported content type for WhatsApp`);
-    }
-  }
-
-  async handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
+  async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
     const body = req.body as WhatsAppWebhookBody;
     if (!body.entry || body.entry.length === 0) return [];
 
     const messages: InboundMessage[] = [];
-
     for (const entry of body.entry) {
       for (const change of entry.changes ?? []) {
         const value = change.value;
         if (!value) continue;
-
-        // Process status updates separately (delivered/read/failed).
-        // The hub does not currently expose a way to emit delivery events
-        // from inside an adapter's handleWebhook, so we attach them as
-        // metadata on a synthesized inbound message OR skip them. For now,
-        // we skip them — exposing this needs a small core API addition
-        // tracked as a follow-up.
         if (value.statuses && value.statuses.length > 0) continue;
 
         for (const m of value.messages ?? []) {
-          const content = this.parseContent(m);
+          const content = parseContent(m);
           if (!content) continue;
 
           const profileName = value.contacts?.[0]?.profile?.name;
 
           messages.push({
-            id: randomUUID(),
+            id: randomId(),
             externalId: m.id,
             channel: 'whatsapp',
             direction: 'inbound',
             account: {
               channel: 'whatsapp',
               channelAccountId:
-                value.metadata?.phone_number_id ?? this.config.phoneNumberId,
+                value.metadata?.phone_number_id ?? config.phoneNumberId,
             },
             contact: {
               channel: 'whatsapp',
@@ -267,92 +366,14 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
     return messages;
   }
 
-  private parseContent(m: WhatsAppInboundMessage): MessageContent | null {
-    switch (m.type) {
-      case 'text':
-        return m.text?.body ? { type: 'text', text: m.text.body } : null;
-      case 'image':
-        return m.image
-          ? {
-              type: 'image',
-              mediaRef: {
-                kind: 'platform-id',
-                value: m.image.id,
-                mimeType: m.image.mime_type,
-              },
-              ...(m.image.caption ? { caption: m.image.caption } : {}),
-            }
-          : null;
-      case 'video':
-        return m.video
-          ? {
-              type: 'video',
-              mediaRef: {
-                kind: 'platform-id',
-                value: m.video.id,
-                mimeType: m.video.mime_type,
-              },
-              ...(m.video.caption ? { caption: m.video.caption } : {}),
-            }
-          : null;
-      case 'audio':
-        return m.audio
-          ? {
-              type: 'audio',
-              mediaRef: {
-                kind: 'platform-id',
-                value: m.audio.id,
-                mimeType: m.audio.mime_type,
-              },
-            }
-          : null;
-      case 'document':
-        return m.document
-          ? {
-              type: 'file',
-              mediaRef: {
-                kind: 'platform-id',
-                value: m.document.id,
-                mimeType: m.document.mime_type,
-              },
-              ...(m.document.caption ? { caption: m.document.caption } : {}),
-            }
-          : null;
-      case 'location':
-        return m.location
-          ? {
-              type: 'location',
-              latitude: m.location.latitude,
-              longitude: m.location.longitude,
-              ...(m.location.name ? { name: m.location.name } : {}),
-              ...(m.location.address ? { address: m.location.address } : {}),
-            }
-          : null;
-      case 'button':
-      case 'interactive':
-        // Treat user button press as text for simplicity; raw payload is preserved.
-        if (m.button?.text) return { type: 'text', text: m.button.text };
-        if (m.interactive?.button_reply?.title)
-          return { type: 'text', text: m.interactive.button_reply.title };
-        return null;
-      default:
-        return null;
-    }
-  }
-
-  /**
-   * Translate a WhatsApp status webhook into a DeliveryReceipt. Exposed
-   * publicly so applications can wire it manually if they need granular
-   * delivery tracking.
-   */
-  parseStatuses(rawBody: unknown): DeliveryReceipt[] {
+  function parseStatuses(rawBody: unknown): DeliveryReceipt[] {
     const body = rawBody as WhatsAppWebhookBody;
     const out: DeliveryReceipt[] = [];
 
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
         for (const s of change.value?.statuses ?? []) {
-          const status = this.mapStatus(s.status);
+          const status = mapStatus(s.status);
           if (!status) continue;
           out.push({
             messageId: s.id,
@@ -375,41 +396,17 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
     return out;
   }
 
-  private mapStatus(status: string): DeliveryStatus | null {
-    switch (status) {
-      case 'sent':
-        return 'sent';
-      case 'delivered':
-        return 'delivered';
-      case 'read':
-        return 'read';
-      case 'failed':
-        return 'failed';
-      default:
-        return null;
-    }
-  }
-
-  verifySignature(req: WebhookRequest): boolean {
+  async function verifySignature(req: WebhookRequest): Promise<boolean> {
     const headerValue = req.headers['x-hub-signature-256'];
-    const signatureHeader = Array.isArray(headerValue)
-      ? headerValue[0]
-      : headerValue;
+    const signatureHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
     if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
 
     const provided = signatureHeader.slice('sha256='.length);
-    const expected = createHmac('sha256', this.config.appSecret)
-      .update(req.rawBody)
-      .digest('hex');
-
-    const a = Buffer.from(expected, 'hex');
-    const b = Buffer.from(provided, 'hex');
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
+    const expected = await hmacSha256Hex(config.appSecret, req.rawBody);
+    return constantTimeEqualHex(expected, provided);
   }
 
-  /** GET handshake helper for webhook subscription. */
-  override verifyWebhookChallenge(query: WebhookRequest['query']): string | null {
+  function verifyWebhookChallenge(query: WebhookRequest['query']): string | null {
     const mode = query['hub.mode'];
     const token = query['hub.verify_token'];
     const challenge = query['hub.challenge'];
@@ -417,38 +414,35 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
     const challengeVal = Array.isArray(challenge) ? challenge[0] : challenge;
     const modeVal = Array.isArray(mode) ? mode[0] : mode;
 
-    if (modeVal === 'subscribe' && tokenVal === this.config.verifyToken) {
+    if (modeVal === 'subscribe' && tokenVal === config.verifyToken) {
       return challengeVal ?? null;
     }
     return null;
   }
 
-  /**
-   * Verify WhatsApp Cloud credentials by fetching the phone number metadata.
-   */
-  async verifyCredentials(): Promise<CredentialsCheckResult> {
-    if (!this.config.phoneNumberId) {
+  async function verifyCredentials(): Promise<CredentialsCheckResult> {
+    if (!config.phoneNumberId) {
       return {
         ok: false,
         reason: 'unauthorized',
         hint: 'WhatsAppConfig.phoneNumberId is empty. Find it at developers.facebook.com → Your App → WhatsApp → API Setup → Phone number ID (the long number, not the human-readable phone number).',
       };
     }
-    if (!this.config.accessToken) {
+    if (!config.accessToken) {
       return {
         ok: false,
         reason: 'unauthorized',
         hint: 'WhatsAppConfig.accessToken is empty. Get a temporary token at WhatsApp → API Setup → Temporary access token (24h), or generate a permanent System User token in Business Settings.',
       };
     }
-    if (!this.config.appSecret) {
+    if (!config.appSecret) {
       return {
         ok: false,
         reason: 'unauthorized',
         hint: 'WhatsAppConfig.appSecret is empty. Find it at Settings → Basic → App Secret. Required for X-Hub-Signature-256 verification.',
       };
     }
-    if (!this.config.verifyToken) {
+    if (!config.verifyToken) {
       return {
         ok: false,
         reason: 'unauthorized',
@@ -456,37 +450,37 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
       };
     }
     try {
-      const res = await request(
-        `${this.apiBase}/${this.apiVersion}/${this.config.phoneNumberId}?fields=display_phone_number,verified_name`,
+      const res = await fetch(
+        `${apiBase()}/${apiVersion()}/${config.phoneNumberId}?fields=display_phone_number,verified_name`,
         {
-          headers: { authorization: `Bearer ${this.config.accessToken}` },
+          headers: { authorization: `Bearer ${config.accessToken}` },
         },
       );
-      if (res.statusCode === 401) {
+      if (res.status === 401) {
         return {
           ok: false,
           reason: 'unauthorized',
           hint: 'WhatsApp rejected the access token. If you used the temporary token, it expires after 24h — generate a new one or set up a permanent System User token.',
         };
       }
-      if (res.statusCode === 404) {
+      if (res.status === 404) {
         return {
           ok: false,
           reason: 'not_found',
-          hint: `phoneNumberId "${this.config.phoneNumberId}" was not found. Confirm you copied the numeric Phone number ID (not the WABA id, not the display number) from API Setup.`,
+          hint: `phoneNumberId "${config.phoneNumberId}" was not found. Confirm you copied the numeric Phone number ID (not the WABA id, not the display number) from API Setup.`,
         };
       }
-      if (res.statusCode >= 400) {
-        const body = (await res.body.json().catch(() => ({}))) as {
+      if (res.status >= 400) {
+        const body = (await res.json().catch(() => ({}))) as {
           error?: { message?: string; code?: number };
         };
         return {
           ok: false,
           reason: 'unknown',
-          hint: `WhatsApp returned ${res.statusCode}: ${body.error?.message ?? 'no message'}`,
+          hint: `WhatsApp returned ${res.status}: ${body.error?.message ?? 'no message'}`,
         };
       }
-      const data = (await res.body.json()) as {
+      const data = (await res.json()) as {
         display_phone_number?: string;
         verified_name?: string;
       };
@@ -505,54 +499,52 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
     }
   }
 
-  async uploadMedia(file: MediaFile): Promise<MediaReference> {
-    if (!(file.data instanceof Buffer)) {
-      // Streams could be supported later via undici Dispatcher; v0 is buffer-only.
-      throw new Error('WhatsApp uploadMedia v0 requires a Buffer');
+  async function uploadMedia(file: MediaFile): Promise<MediaReference> {
+    let blob: Blob;
+    if (file.data instanceof Blob) {
+      blob = file.data;
+    } else if (file.data instanceof Uint8Array) {
+      blob = new Blob([file.data as BlobPart], { type: file.mimeType });
+    } else {
+      throw new Error(
+        'WhatsApp uploadMedia requires data to be a Uint8Array or Blob. Streams are not yet supported.',
+      );
     }
 
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
-    form.append(
-      'file',
-      new Blob([file.data], { type: file.mimeType }),
-      file.filename ?? 'upload',
-    );
+    form.append('file', blob, file.filename ?? 'upload');
     form.append('type', file.mimeType);
 
-    const res = await request(this.mediaUrl, {
+    const res = await fetch(mediaUrl(), {
       method: 'POST',
-      headers: { authorization: `Bearer ${this.config.accessToken}` },
+      headers: { authorization: `Bearer ${config.accessToken}` },
       body: form,
     });
 
-    const data = (await res.body.json().catch(() => ({}))) as {
+    const data = (await res.json().catch(() => ({}))) as {
       id?: string;
       error?: { message?: string };
     };
 
-    if (res.statusCode >= 400 || !data.id) {
+    if (res.status >= 400 || !data.id) {
       throw new Error(
-        `WhatsApp uploadMedia failed: ${data.error?.message ?? res.statusCode}`,
+        `WhatsApp uploadMedia failed: ${data.error?.message ?? res.status}`,
       );
     }
 
     return { kind: 'platform-id', value: data.id, mimeType: file.mimeType };
   }
 
-  async downloadMedia(ref: MediaReference): Promise<MediaFile> {
+  async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
     if (ref.kind !== 'platform-id') {
       throw new Error('WhatsApp downloadMedia requires a platform-id ref');
     }
 
-    // Step 1: fetch the media URL using the id.
-    const lookup = await request(
-      `${this.apiBase}/${this.apiVersion}/${ref.value}`,
-      {
-        headers: { authorization: `Bearer ${this.config.accessToken}` },
-      },
-    );
-    const lookupData = (await lookup.body.json()) as {
+    const lookup = await fetch(`${apiBase()}/${apiVersion()}/${ref.value}`, {
+      headers: { authorization: `Bearer ${config.accessToken}` },
+    });
+    const lookupData = (await lookup.json()) as {
       url?: string;
       mime_type?: string;
     };
@@ -560,20 +552,31 @@ export class WhatsAppAdapter extends Adapter<WhatsAppConfig> {
       throw new Error('WhatsApp media lookup did not return a URL');
     }
 
-    // Step 2: fetch the actual bytes (also requires auth).
-    const fileRes = await request(lookupData.url, {
-      headers: { authorization: `Bearer ${this.config.accessToken}` },
+    const fileRes = await fetch(lookupData.url, {
+      headers: { authorization: `Bearer ${config.accessToken}` },
     });
-    if (fileRes.statusCode >= 400) {
-      throw new Error(`WhatsApp media fetch failed: ${fileRes.statusCode}`);
+    if (fileRes.status >= 400) {
+      throw new Error(`WhatsApp media fetch failed: ${fileRes.status}`);
     }
-    const buffer = Buffer.from(await fileRes.body.arrayBuffer());
+    const data = new Uint8Array(await fileRes.arrayBuffer());
     return {
-      data: buffer,
-      mimeType:
-        lookupData.mime_type ?? ref.mimeType ?? 'application/octet-stream',
+      data,
+      mimeType: lookupData.mime_type ?? ref.mimeType ?? 'application/octet-stream',
     };
   }
+
+  return {
+    channel: 'whatsapp',
+    capabilities: CAPABILITIES,
+    send,
+    handleWebhook,
+    verifySignature,
+    verifyWebhookChallenge,
+    uploadMedia,
+    downloadMedia,
+    verifyCredentials,
+    parseStatuses,
+  };
 }
 
 // ---------- WhatsApp payload shapes (subset) ----------

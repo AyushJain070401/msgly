@@ -1,30 +1,44 @@
-import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import { LineAdapter } from '../src/index.js';
+import { createLineAdapter } from '../src/index.js';
 
 const config = {
   channelAccessToken: 'test-token',
   channelSecret: 'test-secret',
 };
 
-const sign = (body: Buffer): string =>
-  createHmac('sha256', config.channelSecret).update(body).digest('base64');
+const encode = (s: string) => new TextEncoder().encode(s);
 
-describe('LineAdapter', () => {
+async function signLine(body: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(config.channelSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const buffer = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+  const sig = new Uint8Array(await globalThis.crypto.subtle.sign('HMAC', key, buffer));
+  let binary = '';
+  for (let i = 0; i < sig.length; i++) binary += String.fromCharCode(sig[i]!);
+  return btoa(binary);
+}
+
+describe('createLineAdapter', () => {
   it('declares correct channel and capabilities', () => {
-    const a = new LineAdapter(config);
+    const a = createLineAdapter(config);
     expect(a.channel).toBe('line');
     expect(a.capabilities.text).toBe(true);
     expect(a.capabilities.media.file).toBe(false);
   });
 
-  it('verifies a valid signature', () => {
-    const a = new LineAdapter(config);
-    const body = Buffer.from('{"events":[]}');
+  it('verifies a valid signature', async () => {
+    const a = createLineAdapter(config);
+    const body = encode('{"events":[]}');
+    const sig = await signLine(body);
     expect(
-      a.verifySignature({
-        headers: { 'x-line-signature': sign(body) },
+      await a.verifySignature({
+        headers: { 'x-line-signature': sig },
         rawBody: body,
         body: {},
         query: {},
@@ -32,12 +46,12 @@ describe('LineAdapter', () => {
     ).toBe(true);
   });
 
-  it('rejects an invalid signature', () => {
-    const a = new LineAdapter(config);
+  it('rejects an invalid signature', async () => {
+    const a = createLineAdapter(config);
     expect(
-      a.verifySignature({
+      await a.verifySignature({
         headers: { 'x-line-signature': 'wrongsig' },
-        rawBody: Buffer.from('{}'),
+        rawBody: encode('{}'),
         body: {},
         query: {},
       }),
@@ -45,7 +59,7 @@ describe('LineAdapter', () => {
   });
 
   it('parses an inbound text message and captures replyToken', async () => {
-    const a = new LineAdapter(config);
+    const a = createLineAdapter(config);
     const event = {
       events: [
         {
@@ -59,7 +73,7 @@ describe('LineAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body: event,
       query: {},
     });
@@ -72,10 +86,10 @@ describe('LineAdapter', () => {
   });
 
   it('skips non-message events', async () => {
-    const a = new LineAdapter(config);
+    const a = createLineAdapter(config);
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body: { events: [{ type: 'follow', timestamp: 0, source: {} }] },
       query: {},
     });
@@ -83,7 +97,7 @@ describe('LineAdapter', () => {
   });
 
   it('verifyCredentials returns actionable hint when token is empty', async () => {
-    const a = new LineAdapter({ channelAccessToken: '', channelSecret: 'x' });
+    const a = createLineAdapter({ channelAccessToken: '', channelSecret: 'x' });
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -93,7 +107,7 @@ describe('LineAdapter', () => {
   });
 
   it('verifyCredentials returns actionable hint when secret is empty', async () => {
-    const a = new LineAdapter({ channelAccessToken: 'x', channelSecret: '' });
+    const a = createLineAdapter({ channelAccessToken: 'x', channelSecret: '' });
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.hint).toContain('Channel secret');

@@ -88,7 +88,12 @@ export interface MediaReference {
 }
 
 export interface MediaFile {
-  data: Buffer | NodeJS.ReadableStream;
+  /**
+   * Bytes of the file. Use `Uint8Array` for cross-runtime compatibility
+   * (Node `Buffer` extends `Uint8Array`, so passing a Buffer works too).
+   * `Blob` and `ReadableStream` are accepted for browser/Edge use.
+   */
+  data: Uint8Array | Blob | ReadableStream<Uint8Array>;
   mimeType: string;
   filename?: string;
 }

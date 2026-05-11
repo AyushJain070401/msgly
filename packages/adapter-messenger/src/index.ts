@@ -1,31 +1,37 @@
-import type {
-  AdapterCapabilities,
-  ChannelName,
-} from '@msgly/core';
+import type { Adapter, AdapterCapabilities } from '@msgly/core';
 
-import { MetaGraphAdapter, type MetaGraphConfig } from './meta-base.js';
+import { createMetaGraphBase, type MetaGraphConfig } from './meta-base.js';
 
 export type MessengerConfig = MetaGraphConfig;
+
+export interface MessengerAdapter extends Adapter {
+  readonly channel: 'messenger';
+}
+
+const CAPABILITIES: AdapterCapabilities = {
+  text: true,
+  media: { image: true, video: true, audio: true, file: true },
+  interactive: { buttons: true, quickReplies: true },
+  templates: false,
+  reactions: false,
+  typing: true,
+};
 
 /**
  * Facebook Messenger adapter.
  *
- * Important: the Messenger Platform enforces a 24-hour customer service
- * window. After that, you can only send messages with a valid
- * messaging_type tag. This v0 sends "RESPONSE" — fine for the standard
- * reply-within-24h case. Add tagged messaging in a follow-up.
+ * The Messenger Platform enforces a 24-hour customer service window. After
+ * that, you can only send messages with a valid messaging_type tag. This
+ * adapter sends `RESPONSE` — fine for the standard reply-within-24h case.
  */
-export class MessengerAdapter extends MetaGraphAdapter {
-  readonly channel: ChannelName = 'messenger';
-
-  readonly capabilities: AdapterCapabilities = {
-    text: true,
-    media: { image: true, video: true, audio: true, file: true },
-    interactive: { buttons: true, quickReplies: true },
-    templates: false,
-    reactions: false,
-    typing: true,
+export function createMessengerAdapter(config: MessengerConfig): MessengerAdapter {
+  const base = createMetaGraphBase('messenger', config);
+  return {
+    channel: 'messenger',
+    capabilities: CAPABILITIES,
+    ...base,
   };
 }
 
-export { MetaGraphAdapter } from './meta-base.js';
+export { createMetaGraphBase } from './meta-base.js';
+export type { MetaGraphConfig, MetaGraphBase } from './meta-base.js';

@@ -1,66 +1,155 @@
-import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import { request } from 'undici';
-
-import {
-  Adapter,
-  type AdapterCapabilities,
-  type ChannelName,
-  type CredentialsCheckResult,
-  type DeliveryReceipt,
-  type InboundMessage,
-  type MediaFile,
-  type MediaReference,
-  type MessageContent,
-  type OutboundMessage,
-  type WebhookRequest,
+import type {
+  CredentialsCheckResult,
+  DeliveryReceipt,
+  InboundMessage,
+  MediaFile,
+  MediaReference,
+  MessageContent,
+  OutboundMessage,
+  WebhookRequest,
 } from '@msgly/core';
 
 export interface MetaGraphConfig {
-  /** Page access token (Messenger) or IG account access token. */
+  /** Page access token (Messenger) or IG-enabled Page token (Instagram). */
   pageAccessToken: string;
   /** App secret — used for X-Hub-Signature-256 verification. */
   appSecret: string;
   /** Used during webhook verification challenge (GET /webhook). */
   verifyToken: string;
-  /** Override for tests. */
+  /** Override for tests. Defaults to https://graph.facebook.com. */
   apiBase?: string;
   /** Graph API version, defaults to v20.0. */
   apiVersion?: string;
 }
 
+/** The slice of behavior the two Meta channels share. */
+export interface MetaGraphBase {
+  send(message: OutboundMessage): Promise<DeliveryReceipt>;
+  handleWebhook(req: WebhookRequest): Promise<InboundMessage[]>;
+  verifySignature(req: WebhookRequest): Promise<boolean>;
+  verifyWebhookChallenge(query: WebhookRequest['query']): string | null;
+  verifyCredentials(): Promise<CredentialsCheckResult>;
+  uploadMedia(file: MediaFile): Promise<MediaReference>;
+  downloadMedia(ref: MediaReference): Promise<MediaFile>;
+}
+
+export type MetaChannel = 'messenger' | 'instagram';
+
 const GRAPH_API = 'https://graph.facebook.com';
 
+function randomId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function hmacSha256Hex(secret: string, message: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = new Uint8Array(
+    await globalThis.crypto.subtle.sign('HMAC', key, message as BufferSource),
+  );
+  let out = '';
+  for (let i = 0; i < sig.length; i++) out += sig[i]!.toString(16).padStart(2, '0');
+  return out;
+}
+
+function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function defaultToMetaMessage(
+  channel: MetaChannel,
+  content: MessageContent,
+): Record<string, unknown> {
+  switch (content.type) {
+    case 'text':
+      return { text: content.text };
+    case 'image':
+    case 'video':
+    case 'audio':
+    case 'file':
+      return {
+        attachment: {
+          type: content.type === 'file' ? 'file' : content.type,
+          payload: { url: content.mediaRef.value, is_reusable: true },
+        },
+      };
+    case 'interactive':
+      return {
+        text: content.text,
+        quick_replies: content.buttons.slice(0, 13).map((b) => ({
+          content_type: 'text',
+          title: b.label.slice(0, 20),
+          payload: b.id.slice(0, 1000),
+        })),
+      };
+    default:
+      throw new Error(`Unsupported content type for ${channel}: ${(content as { type: string }).type}`);
+  }
+}
+
+function parseInboundContent(msg: MetaInboundMessage): MessageContent | null {
+  if (msg.text) return { type: 'text', text: msg.text };
+  if (msg.attachments && msg.attachments.length > 0) {
+    const att = msg.attachments[0];
+    if (!att) return null;
+    const url = att.payload?.url;
+    const t = att.type;
+    if (url && (t === 'image' || t === 'video' || t === 'audio' || t === 'file')) {
+      return { type: t, mediaRef: { kind: 'url', value: url } };
+    }
+    if (t === 'location' && att.payload?.coordinates) {
+      return {
+        type: 'location',
+        latitude: att.payload.coordinates.lat,
+        longitude: att.payload.coordinates.long,
+      };
+    }
+  }
+  return null;
+}
+
+export interface MetaGraphBaseOptions {
+  /** Override the outbound message shape (e.g. to reject channel-specific types). */
+  toMetaMessage?: (content: MessageContent) => Record<string, unknown>;
+}
+
 /**
- * Shared base for Messenger and Instagram, both of which speak Meta's
- * Graph API with the Send API and the same webhook signature scheme.
+ * Build the shared Meta Graph behavior. Messenger and Instagram both speak
+ * Meta's Send API with identical webhook signing and similar message shapes,
+ * so the two channel factories compose this base.
  */
-export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
-  abstract override readonly channel: ChannelName;
-  abstract override readonly capabilities: AdapterCapabilities;
+export function createMetaGraphBase(
+  channel: MetaChannel,
+  config: MetaGraphConfig,
+  options: MetaGraphBaseOptions = {},
+): MetaGraphBase {
+  const apiBase = (): string => config.apiBase ?? GRAPH_API;
+  const apiVersion = (): string => config.apiVersion ?? 'v20.0';
+  const sendUrl = (): string => `${apiBase()}/${apiVersion()}/me/messages`;
 
-  protected get apiBase(): string {
-    return this.config.apiBase ?? GRAPH_API;
-  }
+  const toMeta =
+    options.toMetaMessage ?? ((c: MessageContent) => defaultToMetaMessage(channel, c));
 
-  protected get apiVersion(): string {
-    return this.config.apiVersion ?? 'v20.0';
-  }
-
-  protected get sendUrl(): string {
-    return `${this.apiBase}/${this.apiVersion}/me/messages`;
-  }
-
-  async send(message: OutboundMessage): Promise<DeliveryReceipt> {
-    const messagePayload = this.toMetaMessage(message.content);
-
+  async function send(message: OutboundMessage): Promise<DeliveryReceipt> {
     const payload = {
       recipient: { id: message.contact.channelUserId },
       messaging_type: 'RESPONSE',
-      message: messagePayload,
+      message: toMeta(message.content),
     };
 
-    const res = await request(
-      `${this.sendUrl}?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
+    const res = await fetch(
+      `${sendUrl()}?access_token=${encodeURIComponent(config.pageAccessToken)}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -68,12 +157,12 @@ export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
       },
     );
 
-    const data = (await res.body.json().catch(() => ({}))) as {
+    const data = (await res.json().catch(() => ({}))) as {
       message_id?: string;
       error?: { message?: string; code?: number };
     };
 
-    if (res.statusCode >= 200 && res.statusCode < 300 && data.message_id) {
+    if (res.status >= 200 && res.status < 300 && data.message_id) {
       return {
         messageId: message.id,
         externalId: data.message_id,
@@ -87,134 +176,51 @@ export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
       status: 'failed',
       timestamp: new Date().toISOString(),
       error: {
-        code: `meta_${data.error?.code ?? res.statusCode}`,
+        code: `meta_${data.error?.code ?? res.status}`,
         message: data.error?.message ?? 'unknown',
       },
     };
   }
 
-  protected toMetaMessage(content: MessageContent): Record<string, unknown> {
-    switch (content.type) {
-      case 'text':
-        return { text: content.text };
-      case 'image':
-      case 'video':
-      case 'audio':
-      case 'file':
-        return {
-          attachment: {
-            type: this.attachmentTypeFor(content.type),
-            payload: { url: content.mediaRef.value, is_reusable: true },
-          },
-        };
-      case 'interactive':
-        return {
-          text: content.text,
-          // Messenger limits: max 13 quick replies; title max 20 chars; payload max 1000 chars.
-          quick_replies: content.buttons.slice(0, 13).map((b) => ({
-            content_type: 'text',
-            title: b.label.slice(0, 20),
-            payload: b.id.slice(0, 1000),
-          })),
-        };
-      default:
-        throw new Error(
-          `Unsupported content type for ${this.channel}: ${content.type}`,
-        );
-    }
-  }
-
-  private attachmentTypeFor(type: string): string {
-    if (type === 'file') return 'file';
-    return type; // image / video / audio map 1:1
-  }
-
-  async handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
+  async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
     const body = req.body as MetaWebhookBody;
     if (!body.entry || body.entry.length === 0) return [];
 
     const messages: InboundMessage[] = [];
-
     for (const entry of body.entry) {
       const events = entry.messaging ?? [];
       for (const event of events) {
         if (!event.message || event.message.is_echo) continue;
-
-        const content = this.parseContent(event.message);
+        const content = parseInboundContent(event.message);
         if (!content) continue;
 
         messages.push({
-          id: randomUUID(),
+          id: randomId(),
           externalId: event.message.mid,
-          channel: this.channel,
+          channel,
           direction: 'inbound',
-          account: {
-            channel: this.channel,
-            channelAccountId: event.recipient.id,
-          },
-          contact: {
-            channel: this.channel,
-            channelUserId: event.sender.id,
-          },
+          account: { channel, channelAccountId: event.recipient.id },
+          contact: { channel, channelUserId: event.sender.id },
           content,
           timestamp: new Date(event.timestamp).toISOString(),
           raw: event,
         });
       }
     }
-
     return messages;
   }
 
-  protected parseContent(msg: MetaInboundMessage): MessageContent | null {
-    if (msg.text) return { type: 'text', text: msg.text };
-    if (msg.attachments && msg.attachments.length > 0) {
-      const att = msg.attachments[0];
-      if (!att) return null;
-      const url = att.payload?.url;
-      if (!url) return null;
-      const t = att.type;
-      if (t === 'image' || t === 'video' || t === 'audio' || t === 'file') {
-        return { type: t, mediaRef: { kind: 'url', value: url } };
-      }
-      if (t === 'location' && att.payload?.coordinates) {
-        return {
-          type: 'location',
-          latitude: att.payload.coordinates.lat,
-          longitude: att.payload.coordinates.long,
-        };
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Meta signs requests with HMAC-SHA256 of the raw body, hex-encoded,
-   * prefixed with "sha256=" in the X-Hub-Signature-256 header.
-   */
-  verifySignature(req: WebhookRequest): boolean {
+  async function verifySignature(req: WebhookRequest): Promise<boolean> {
     const headerValue = req.headers['x-hub-signature-256'];
-    const signatureHeader = Array.isArray(headerValue)
-      ? headerValue[0]
-      : headerValue;
+    const signatureHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
     if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
 
     const provided = signatureHeader.slice('sha256='.length);
-    const expected = createHmac('sha256', this.config.appSecret)
-      .update(req.rawBody)
-      .digest('hex');
-
-    const a = Buffer.from(expected, 'hex');
-    const b = Buffer.from(provided, 'hex');
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
+    const expected = await hmacSha256Hex(config.appSecret, req.rawBody);
+    return constantTimeEqualHex(expected, provided);
   }
 
-  /**
-   * Helper for the GET webhook verification handshake. Call this from your
-   * route handler when the platform pings to verify the endpoint.
-   */
-  override verifyWebhookChallenge(query: WebhookRequest['query']): string | null {
+  function verifyWebhookChallenge(query: WebhookRequest['query']): string | null {
     const mode = query['hub.mode'];
     const token = query['hub.verify_token'];
     const challenge = query['hub.challenge'];
@@ -222,45 +228,43 @@ export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
     const challengeVal = Array.isArray(challenge) ? challenge[0] : challenge;
     const modeVal = Array.isArray(mode) ? mode[0] : mode;
 
-    if (modeVal === 'subscribe' && tokenVal === this.config.verifyToken) {
+    if (modeVal === 'subscribe' && tokenVal === config.verifyToken) {
       return challengeVal ?? null;
     }
     return null;
   }
 
-  /**
-   * Verify the page access token by calling /me on the Graph API.
-   */
-  async verifyCredentials(): Promise<CredentialsCheckResult> {
-    if (!this.config.pageAccessToken) {
+  async function verifyCredentials(): Promise<CredentialsCheckResult> {
+    if (!config.pageAccessToken) {
       return {
         ok: false,
         reason: 'unauthorized',
-        hint: this.channel === 'messenger'
-          ? 'MessengerConfig.pageAccessToken is empty. Generate one at developers.facebook.com → Your App → Messenger → Settings → Generate Token (select your Page).'
-          : 'InstagramConfig.pageAccessToken is empty. Generate one at developers.facebook.com → Your App → Messenger → Instagram Settings (token must be from the linked Facebook Page).',
+        hint:
+          channel === 'messenger'
+            ? 'MessengerConfig.pageAccessToken is empty. Generate one at developers.facebook.com → Your App → Messenger → Settings → Generate Token (select your Page).'
+            : 'InstagramConfig.pageAccessToken is empty. Generate one at developers.facebook.com → Your App → Messenger → Instagram Settings (token must be from the linked Facebook Page).',
       };
     }
-    if (!this.config.appSecret) {
+    if (!config.appSecret) {
       return {
         ok: false,
         reason: 'unauthorized',
         hint: 'appSecret is empty. Find it at developers.facebook.com → Your App → Settings → Basic → App Secret. Required for X-Hub-Signature-256 verification.',
       };
     }
-    if (!this.config.verifyToken) {
+    if (!config.verifyToken) {
       return {
         ok: false,
         reason: 'unauthorized',
-        hint: 'verifyToken is empty. This is YOUR chosen string used during webhook subscription — set the same value in your code and in Meta\'s webhook configuration.',
+        hint: "verifyToken is empty. This is YOUR chosen string used during webhook subscription — set the same value in your code and in Meta's webhook configuration.",
       };
     }
     try {
-      const res = await request(
-        `${this.apiBase}/${this.apiVersion}/me?access_token=${encodeURIComponent(this.config.pageAccessToken)}`,
+      const res = await fetch(
+        `${apiBase()}/${apiVersion()}/me?access_token=${encodeURIComponent(config.pageAccessToken)}`,
       );
-      if (res.statusCode === 401 || res.statusCode === 400) {
-        const body = (await res.body.json().catch(() => ({}))) as {
+      if (res.status === 401 || res.status === 400) {
+        const body = (await res.json().catch(() => ({}))) as {
           error?: { message?: string };
         };
         return {
@@ -269,14 +273,14 @@ export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
           hint: `Meta rejected the page access token (${body.error?.message ?? 'invalid token'}). Regenerate at developers.facebook.com → Your App → Messenger → Settings → Generate Token.`,
         };
       }
-      if (res.statusCode >= 400) {
+      if (res.status >= 400) {
         return {
           ok: false,
           reason: 'unknown',
-          hint: `Meta /me returned ${res.statusCode}`,
+          hint: `Meta /me returned ${res.status}`,
         };
       }
-      const data = (await res.body.json()) as { id?: string; name?: string };
+      const data = (await res.json()) as { id?: string; name?: string };
       return {
         ok: true,
         accountInfo: data.name
@@ -294,32 +298,36 @@ export abstract class MetaGraphAdapter extends Adapter<MetaGraphConfig> {
     }
   }
 
-  async uploadMedia(file: MediaFile): Promise<MediaReference> {
-    // Meta supports message_attachments upload via multipart, but the
-    // simpler path for v0 is to require the caller to host media at a URL.
-    // We can extend this later once the basics ship.
-    void file;
+  async function uploadMedia(_file: MediaFile): Promise<MediaReference> {
     throw new Error(
-      `${this.channel} adapter v0 requires media hosted at a public URL. Pass { kind: "url", value: "https://..." }.`,
+      `${channel} adapter requires media hosted at a public URL. Pass { kind: "url", value: "https://..." }.`,
     );
   }
 
-  async downloadMedia(ref: MediaReference): Promise<MediaFile> {
+  async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
     if (ref.kind !== 'url') {
       throw new Error('Meta media must be referenced by URL');
     }
-    const res = await request(ref.value);
-    if (res.statusCode >= 400) {
-      throw new Error(`Media download failed: ${res.statusCode}`);
+    const res = await fetch(ref.value);
+    if (res.status >= 400) {
+      throw new Error(`Media download failed: ${res.status}`);
     }
-    const buffer = Buffer.from(await res.body.arrayBuffer());
+    const data = new Uint8Array(await res.arrayBuffer());
     return {
-      data: buffer,
-      mimeType:
-        (res.headers['content-type'] as string | undefined) ??
-        'application/octet-stream',
+      data,
+      mimeType: res.headers.get('content-type') ?? 'application/octet-stream',
     };
   }
+
+  return {
+    send,
+    handleWebhook,
+    verifySignature,
+    verifyWebhookChallenge,
+    verifyCredentials,
+    uploadMedia,
+    downloadMedia,
+  };
 }
 
 // ---------- Meta payload shapes (subset, shared) ----------

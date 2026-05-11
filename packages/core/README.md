@@ -1,6 +1,6 @@
 # @msgly/core
 
-> Core engine for Msgly — unified message model, the `MessagingHub` orchestrator, retry, idempotency, capability checks, and the `Adapter` contract every channel package implements.
+> Core engine for Msgly — unified message model, the `createHub` factory, retry, idempotency, capability checks, and the `Adapter` contract every channel package implements. **Zero classes, runs in Node 18+, Next.js (Node + Edge), and the browser.**
 
 `@msgly/core` is the runtime every channel adapter plugs into. You won't usually depend on it directly for application code — install it alongside one or more adapters (`@msgly/telegram`, `@msgly/whatsapp`, `@msgly/line`, `@msgly/messenger`, `@msgly/instagram`).
 
@@ -14,23 +14,27 @@ npm install @msgly/core
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { TelegramAdapter } from '@msgly/telegram';
-import { WhatsAppAdapter } from '@msgly/whatsapp';
+import { createHub } from '@msgly/core';
+import { createTelegramAdapter } from '@msgly/telegram';
+import { createWhatsAppAdapter } from '@msgly/whatsapp';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new TelegramAdapter({
-  botToken: process.env.TELEGRAM_BOT_TOKEN!,
-  webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET!,
-}));
+hub.register(
+  createTelegramAdapter({
+    botToken: process.env.TELEGRAM_BOT_TOKEN!,
+    webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET!,
+  }),
+);
 
-hub.register(new WhatsAppAdapter({
-  phoneNumberId: process.env.WA_PHONE_ID!,
-  accessToken: process.env.WA_TOKEN!,
-  appSecret: process.env.META_APP_SECRET!,
-  verifyToken: process.env.META_VERIFY_TOKEN!,
-}));
+hub.register(
+  createWhatsAppAdapter({
+    phoneNumberId: process.env.WA_PHONE_ID!,
+    accessToken: process.env.WA_TOKEN!,
+    appSecret: process.env.META_APP_SECRET!,
+    verifyToken: process.env.META_VERIFY_TOKEN!,
+  }),
+);
 
 // Verify credentials at startup — fail fast on bad tokens
 await hub.connect({ throwOnFailure: true });
@@ -47,7 +51,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 const handlers = hub.createWebhookHandler();
 app.get('/webhook/:channel', handlers.get);
@@ -108,21 +112,21 @@ interface ContactRef {
 }
 ```
 
-## `MessagingHub`
+## `createHub(options?)`
 
 ```typescript
-new MessagingHub(options?: MessagingHubOptions)
+function createHub(options?: HubOptions): Hub;
 
-interface MessagingHubOptions {
-  store?: MessageStore;             // default: InMemoryStore
-  logger?: pino.Logger;             // default: pino({ name: 'chatterbox' })
+interface HubOptions {
+  store?: MessageStore;             // default: in-memory
+  logger?: Logger;                  // default: console-based (warn + error only)
   retry?: Partial<RetryOptions>;    // default: 3 attempts, 500ms base, 8000ms cap
 }
 ```
 
 ### `hub.register(adapter)`
 
-Registers a channel adapter. Throws if the same channel is registered twice. Returns `this` for chaining.
+Registers a channel adapter. Throws `MsglyError` with `code: 'AdapterAlreadyRegistered'` on duplicate registration. Returns `hub` for chaining.
 
 ### `hub.send(message)`
 
@@ -139,13 +143,18 @@ await hub.send({
 
 Sends are wrapped in retry (see [Retry](#retry)) and validated against the target adapter's capabilities (see [Capability checks](#capability-checks)).
 
-### `hub.on(event, handler)`
+### `hub.on(event, handler)` — returns unsubscribe
 
 ```typescript
-hub.on('message',  (msg: InboundMessage) => { /* handle inbound */ });
-hub.on('delivery', (receipt: DeliveryReceipt) => { /* status updates */ });
-hub.on('error',    (err: Error, ctx?: object) => { /* observe failures */ });
+const off = hub.on('message',  (msg) => { /* handle inbound */ });
+hub.on('delivery', (receipt) => { /* status updates */ });
+hub.on('error',    (err, ctx) => { /* observe failures */ });
+
+// Later:
+off();
 ```
+
+Unlike traditional `EventEmitter`-based libraries, `hub.on()` returns an unsubscribe function — no need to track handler references for cleanup.
 
 ### `hub.connect({ throwOnFailure? })`
 
@@ -172,23 +181,19 @@ app.get('/webhook/:channel', handlers.get);
 app.post('/webhook/:channel', handlers.post);
 ```
 
-> **Raw body is required.** Signature verification needs the byte-exact request body. Configure your JSON parser to expose it on `req.rawBody` — for Express: `express.json({ verify: (req, _r, buf) => (req.rawBody = buf) })`.
+> **Raw body is required.** Signature verification needs the byte-exact request body as a `Uint8Array`. Configure your JSON parser to expose it on `req.rawBody` — for Express: `express.json({ verify: (req, _r, buf) => (req.rawBody = new Uint8Array(buf)) })`.
 
 ### `hub.handleWebhook(channel, req)`
 
-The lower-level entry point used by `createWebhookHandler`. Useful when wiring webhooks into a framework that doesn't fit the Express shape.
+The lower-level entry point used by `createWebhookHandler`. Useful when wiring webhooks into a framework that doesn't fit the Express shape, or directly inside Next.js Route Handlers / Server Actions.
 
-### `hub.channels`
+### `hub.channels` / `hub.getAdapter(channel)`
 
-Returns the list of registered channel names.
-
-### `hub.getAdapter(channel)`
-
-Returns the registered adapter, or throws `AdapterNotRegisteredError`.
+`channels` returns the list of registered channel names. `getAdapter` returns the registered adapter, or throws a `MsglyError` with `code: 'AdapterNotRegistered'`.
 
 ### `hub.start()` / `hub.stop()`
 
-Calls the optional `start()`/`stop()` lifecycle hooks on every registered adapter (used by adapters that need to do work outside the request cycle).
+Calls the optional `start()`/`stop()` lifecycle hooks on every registered adapter.
 
 ## Retry
 
@@ -202,12 +207,12 @@ Sends are wrapped in exponential backoff with **equal jitter**:
 Auth errors (401/403/404) and "unauthorized" codes are **never** retried — the token is bad, retrying just wastes API calls. Network errors and 5xx are retried.
 
 ```typescript
-const hub = new MessagingHub({
+const hub = createHub({
   retry: {
     maxAttempts: 5,
     initialDelayMs: 200,
     maxDelayMs: 4000,
-    shouldRetry: (err, attempt) => attempt < 3, // your own policy
+    shouldRetry: (err, attempt) => attempt < 3,
   },
 });
 ```
@@ -227,15 +232,15 @@ interface AdapterCapabilities {
 }
 ```
 
-The hub checks `content.type` against these before dispatching to the adapter. Unsupported sends throw `UnsupportedFeatureError`:
+The hub checks `content.type` against these before dispatching. Unsupported sends throw a `MsglyError` with `code: 'UnsupportedFeature'`:
 
 ```typescript
-import { UnsupportedFeatureError } from '@msgly/core';
+import { isMsglyError } from '@msgly/core';
 
 try {
   await hub.send({ channel: 'instagram', /* ... */ content: { type: 'audio', mediaRef } });
 } catch (err) {
-  if (err instanceof UnsupportedFeatureError) {
+  if (isMsglyError(err, 'UnsupportedFeature')) {
     // Instagram does not support audio
   }
 }
@@ -263,7 +268,7 @@ The hub uses a `MessageStore` for two things:
 1. Saving inbound and outbound messages.
 2. Deduplicating webhook deliveries by `externalId` (platforms retry on 5xx, so the same message can arrive twice).
 
-The default `InMemoryStore` is fine for development and tests but loses state on restart. Provide your own implementation for production:
+The default in-memory store is fine for development and tests but loses state on restart. Provide your own implementation for production:
 
 ```typescript
 interface MessageStore {
@@ -272,65 +277,100 @@ interface MessageStore {
   hasExternalId(channel: string, externalId: string): Promise<boolean>;
 }
 
-const hub = new MessagingHub({ store: new PostgresStore(db) });
+const hub = createHub({ store: makePostgresStore(db) });
 ```
 
 ## Errors
 
-All errors extend `MessagingHubError`:
+All errors thrown by msgly are plain `Error` instances tagged with `name: 'MsglyError'` plus a machine-readable `code`. Detect them with `isMsglyError`:
 
 ```typescript
-import {
-  MessagingHubError,
-  AdapterNotRegisteredError,   // hub.send() to a channel with no adapter
-  UnsupportedFeatureError,     // content.type not in adapter.capabilities
-  InvalidSignatureError,       // webhook HMAC mismatch
-  SendFailedError,             // adapter.send() failed after retries
-} from '@msgly/core';
+import { isMsglyError, type MsglyErrorCode } from '@msgly/core';
+
+try {
+  await hub.send(/* ... */);
+} catch (err) {
+  if (isMsglyError(err, 'SendFailed')) {
+    console.log('channel:', err.channel);
+    console.log('receipt:', err.receipt);
+  }
+}
 ```
 
-`SendFailedError` exposes `.sendCause` — either the underlying exception or the failed `DeliveryReceipt` (which carries `error.code` and `error.message`).
+Possible codes:
+
+| Code                      | Thrown when                                          |
+| ------------------------- | ---------------------------------------------------- |
+| `AdapterNotRegistered`    | `hub.send()` to a channel with no adapter            |
+| `AdapterAlreadyRegistered`| `hub.register()` called twice for the same channel   |
+| `UnsupportedFeature`      | `content.type` is not in adapter capabilities        |
+| `InvalidSignature`        | Webhook HMAC mismatch                                |
+| `SendFailed`              | `adapter.send()` failed after retries                |
+
+Constructors are also exported for adapter authors: `adapterNotRegistered`, `unsupportedFeature`, `invalidSignature`, `sendFailed`.
 
 ## Writing a custom adapter
 
-Implement the `Adapter<TConfig>` abstract class:
+Implement the `Adapter` interface:
 
 ```typescript
-import {
+import type {
   Adapter,
-  type AdapterCapabilities,
-  type CredentialsCheckResult,
-  type WebhookRequest,
-  type OutboundMessage,
-  type InboundMessage,
-  type DeliveryReceipt,
-  type MediaFile,
-  type MediaReference,
+  AdapterCapabilities,
+  CredentialsCheckResult,
+  WebhookRequest,
+  OutboundMessage,
+  InboundMessage,
+  DeliveryReceipt,
+  MediaFile,
+  MediaReference,
 } from '@msgly/core';
 
 interface MyConfig { apiToken: string; }
 
-class MyAdapter extends Adapter<MyConfig> {
-  readonly channel = 'mychannel' as const;
-  readonly capabilities: AdapterCapabilities = { /* ... */ };
+export function createMyAdapter(config: MyConfig): Adapter {
+  return {
+    channel: 'mychannel' as const,
+    capabilities: { /* ... */ },
+    async send(message: OutboundMessage): Promise<DeliveryReceipt> { /* ... */ },
+    async handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> { /* ... */ },
+    async verifySignature(req: WebhookRequest): Promise<boolean> { /* HMAC check */ },
+    async uploadMedia(file: MediaFile): Promise<MediaReference> { /* ... */ },
+    async downloadMedia(ref: MediaReference): Promise<MediaFile> { /* ... */ },
+    async verifyCredentials(): Promise<CredentialsCheckResult> { /* ... */ },
 
-  async send(message: OutboundMessage): Promise<DeliveryReceipt> { /* ... */ }
-  async handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> { /* ... */ }
-  verifySignature(req: WebhookRequest): boolean { /* HMAC check */ }
-  async uploadMedia(file: MediaFile): Promise<MediaReference> { /* ... */ }
-  async downloadMedia(ref: MediaReference): Promise<MediaFile> { /* ... */ }
-  async verifyCredentials(): Promise<CredentialsCheckResult> { /* ... */ }
+    // Optional — for Meta-style GET handshake:
+    verifyWebhookChallenge(query) { /* ... */ return null; },
 
-  // Optional — for Meta-style GET handshake:
-  verifyWebhookChallenge?(query): string | null { /* ... */ }
-
-  // Optional lifecycle hooks:
-  async start?(): Promise<void> { /* ... */ }
-  async stop?(): Promise<void> { /* ... */ }
+    // Optional lifecycle hooks:
+    async start() { /* ... */ },
+    async stop() { /* ... */ },
+  };
 }
 ```
 
 Adding a new `ChannelName` requires extending the union in `core/src/types.ts` — `'mychannel'` won't compile until you do.
+
+## Runtime compatibility
+
+`@msgly/core` and every adapter use only Web Standard APIs:
+
+- **`fetch`** (no `undici`, no `node-fetch`)
+- **Web Crypto** (`globalThis.crypto.subtle`) for HMAC signatures
+- **`TextEncoder`** / **`Uint8Array`** instead of `Buffer`
+- **`globalThis.crypto.randomUUID()`** for ids (with a Math.random fallback)
+
+This means msgly runs everywhere modern JS does:
+
+| Runtime                       | Supported |
+| ----------------------------- | --------- |
+| Node 18+                      | ✓         |
+| Next.js Node runtime          | ✓         |
+| Next.js Edge runtime          | ✓         |
+| Bun / Deno                    | ✓         |
+| Modern browsers (server-only adapters; not for client sends) | ✓ |
+
+Server-side webhook handling needs the raw request bytes — most frameworks expose them; for Next.js Route Handlers, use `await req.arrayBuffer()` and pass `new Uint8Array(...)`.
 
 ## Adapters
 

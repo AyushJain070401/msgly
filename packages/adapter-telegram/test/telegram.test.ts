@@ -1,51 +1,53 @@
 import { describe, expect, it } from 'vitest';
 
-import { TelegramAdapter } from '../src/index.js';
+import { createTelegramAdapter } from '../src/index.js';
 
 const config = {
   botToken: '123:ABC-DEF',
   webhookSecret: 'shh',
 };
 
-describe('TelegramAdapter', () => {
+const encode = (s: string) => new TextEncoder().encode(s);
+
+describe('createTelegramAdapter', () => {
   it('declares correct channel and capabilities', () => {
-    const a = new TelegramAdapter(config);
+    const a = createTelegramAdapter(config);
     expect(a.channel).toBe('telegram');
     expect(a.capabilities.text).toBe(true);
     expect(a.capabilities.media.image).toBe(true);
     expect(a.capabilities.templates).toBe(false);
   });
 
-  it('verifies webhook secret token', () => {
-    const a = new TelegramAdapter(config);
+  it('verifies webhook secret token', async () => {
+    const a = createTelegramAdapter(config);
     expect(
-      a.verifySignature({
+      await a.verifySignature({
         headers: { 'x-telegram-bot-api-secret-token': 'shh' },
-        rawBody: Buffer.from(''),
+        rawBody: encode(''),
         body: {},
         query: {},
       }),
     ).toBe(true);
   });
 
-  it('rejects wrong webhook secret token', () => {
-    const a = new TelegramAdapter(config);
+  it('rejects wrong webhook secret token', async () => {
+    const a = createTelegramAdapter(config);
     expect(
-      a.verifySignature({
+      await a.verifySignature({
         headers: { 'x-telegram-bot-api-secret-token': 'wrong' },
-        rawBody: Buffer.from(''),
+        rawBody: encode(''),
         body: {},
         query: {},
       }),
     ).toBe(false);
   });
 
-  it('skips signature check when webhookSecret is unset', () => {
-    const a = new TelegramAdapter({ botToken: 'x' });
+  it('skips signature check when webhookSecret is unset', async () => {
+    const a = createTelegramAdapter({ botToken: 'x' });
     expect(
-      a.verifySignature({
+      await a.verifySignature({
         headers: {},
-        rawBody: Buffer.from(''),
+        rawBody: encode(''),
         body: {},
         query: {},
       }),
@@ -53,7 +55,7 @@ describe('TelegramAdapter', () => {
   });
 
   it('parses an inbound text message', async () => {
-    const a = new TelegramAdapter(config);
+    const a = createTelegramAdapter(config);
     const update = {
       update_id: 1,
       message: {
@@ -66,7 +68,7 @@ describe('TelegramAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body: update,
       query: {},
     });
@@ -79,7 +81,7 @@ describe('TelegramAdapter', () => {
   });
 
   it('parses an inbound photo message with caption', async () => {
-    const a = new TelegramAdapter(config);
+    const a = createTelegramAdapter(config);
     const update = {
       update_id: 2,
       message: {
@@ -92,7 +94,7 @@ describe('TelegramAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body: update,
       query: {},
     });
@@ -107,7 +109,7 @@ describe('TelegramAdapter', () => {
   });
 
   it('verifyCredentials returns hint when token is empty', async () => {
-    const a = new TelegramAdapter({ botToken: '' });
+    const a = createTelegramAdapter({ botToken: '' });
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) {

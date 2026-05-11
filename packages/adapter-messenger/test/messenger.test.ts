@@ -1,7 +1,6 @@
-import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import { MessengerAdapter } from '../src/index.js';
+import { createMessengerAdapter } from '../src/index.js';
 
 const config = {
   pageAccessToken: 'page-token',
@@ -9,17 +8,31 @@ const config = {
   verifyToken: 'verify-token',
 };
 
-const sign = (body: Buffer): string =>
-  'sha256=' +
-  createHmac('sha256', config.appSecret).update(body).digest('hex');
+const encode = (s: string) => new TextEncoder().encode(s);
 
-describe('MessengerAdapter', () => {
-  it('verifies x-hub-signature-256', () => {
-    const a = new MessengerAdapter(config);
-    const body = Buffer.from('{"object":"page"}');
+async function signMeta(body: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(config.appSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const buffer = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+  const sig = new Uint8Array(await globalThis.crypto.subtle.sign('HMAC', key, buffer));
+  let hex = '';
+  for (let i = 0; i < sig.length; i++) hex += sig[i]!.toString(16).padStart(2, '0');
+  return `sha256=${hex}`;
+}
+
+describe('createMessengerAdapter', () => {
+  it('verifies x-hub-signature-256', async () => {
+    const a = createMessengerAdapter(config);
+    const body = encode('{"object":"page"}');
+    const sig = await signMeta(body);
     expect(
-      a.verifySignature({
-        headers: { 'x-hub-signature-256': sign(body) },
+      await a.verifySignature({
+        headers: { 'x-hub-signature-256': sig },
         rawBody: body,
         body: {},
         query: {},
@@ -27,12 +40,12 @@ describe('MessengerAdapter', () => {
     ).toBe(true);
   });
 
-  it('rejects malformed signature header', () => {
-    const a = new MessengerAdapter(config);
+  it('rejects malformed signature header', async () => {
+    const a = createMessengerAdapter(config);
     expect(
-      a.verifySignature({
+      await a.verifySignature({
         headers: { 'x-hub-signature-256': 'md5=foo' },
-        rawBody: Buffer.from(''),
+        rawBody: encode(''),
         body: {},
         query: {},
       }),
@@ -40,8 +53,8 @@ describe('MessengerAdapter', () => {
   });
 
   it('handles webhook GET challenge', () => {
-    const a = new MessengerAdapter(config);
-    const challenge = a.verifyWebhookChallenge({
+    const a = createMessengerAdapter(config);
+    const challenge = a.verifyWebhookChallenge!({
       'hub.mode': 'subscribe',
       'hub.verify_token': 'verify-token',
       'hub.challenge': '1234',
@@ -50,8 +63,8 @@ describe('MessengerAdapter', () => {
   });
 
   it('rejects challenge with wrong token', () => {
-    const a = new MessengerAdapter(config);
-    const challenge = a.verifyWebhookChallenge({
+    const a = createMessengerAdapter(config);
+    const challenge = a.verifyWebhookChallenge!({
       'hub.mode': 'subscribe',
       'hub.verify_token': 'wrong',
       'hub.challenge': '1234',
@@ -60,7 +73,7 @@ describe('MessengerAdapter', () => {
   });
 
   it('parses an inbound text message', async () => {
-    const a = new MessengerAdapter(config);
+    const a = createMessengerAdapter(config);
     const body = {
       object: 'page',
       entry: [
@@ -80,7 +93,7 @@ describe('MessengerAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -92,7 +105,7 @@ describe('MessengerAdapter', () => {
   });
 
   it('skips echo messages', async () => {
-    const a = new MessengerAdapter(config);
+    const a = createMessengerAdapter(config);
     const body = {
       object: 'page',
       entry: [
@@ -112,7 +125,7 @@ describe('MessengerAdapter', () => {
     };
     const messages = await a.handleWebhook({
       headers: {},
-      rawBody: Buffer.from(''),
+      rawBody: encode(''),
       body,
       query: {},
     });
@@ -120,7 +133,7 @@ describe('MessengerAdapter', () => {
   });
 
   it('verifyCredentials gives a Messenger-specific hint when token missing', async () => {
-    const a = new MessengerAdapter({
+    const a = createMessengerAdapter({
       pageAccessToken: '',
       appSecret: 'x',
       verifyToken: 'y',

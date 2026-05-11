@@ -1,6 +1,6 @@
 # @msgly/whatsapp
 
-> WhatsApp Cloud API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive WhatsApp messages through the unified `MessagingHub` interface — text, all media types, interactive buttons, quick replies, reactions, and pre-approved templates.
+> WhatsApp Cloud API adapter for [Msgly](https://github.com/AyushJain070401/chatterbox). Send and receive WhatsApp messages through the unified hub — text, all media types, interactive buttons, quick replies, reactions, and pre-approved templates. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
 ## Install
 
@@ -12,17 +12,19 @@ npm install @msgly/core @msgly/whatsapp
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { WhatsAppAdapter } from '@msgly/whatsapp';
+import { createHub } from '@msgly/core';
+import { createWhatsAppAdapter } from '@msgly/whatsapp';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new WhatsAppAdapter({
-  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID!,
-  accessToken: process.env.WHATSAPP_ACCESS_TOKEN!,
-  appSecret: process.env.META_APP_SECRET!,
-  verifyToken: process.env.META_VERIFY_TOKEN!,
-}));
+hub.register(
+  createWhatsAppAdapter({
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID!,
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN!,
+    appSecret: process.env.META_APP_SECRET!,
+    verifyToken: process.env.META_VERIFY_TOKEN!,
+  }),
+);
 
 await hub.connect({ throwOnFailure: true });
 
@@ -38,7 +40,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 const handlers = hub.createWebhookHandler();
 app.get('/webhook/:channel', handlers.get);
@@ -51,23 +53,12 @@ app.listen(3000);
 
 ```typescript
 interface WhatsAppConfig {
-  /** Phone number ID (the long numeric id, not the human phone). */
-  phoneNumberId: string;
-
-  /** Cloud API access token — temporary (24h) or System User (permanent). */
-  accessToken: string;
-
-  /** App secret — used for X-Hub-Signature-256 verification. */
-  appSecret: string;
-
-  /** Your chosen string for the webhook GET handshake. */
-  verifyToken: string;
-
-  /** Override for tests. Defaults to https://graph.facebook.com. */
-  apiBase?: string;
-
-  /** Graph API version. Defaults to v20.0. */
-  apiVersion?: string;
+  phoneNumberId: string;  // long numeric id from API Setup
+  accessToken: string;    // temporary (24h) or System User token
+  appSecret: string;      // from App Settings → Basic
+  verifyToken: string;    // your chosen string for webhook handshake
+  apiBase?: string;       // defaults to https://graph.facebook.com
+  apiVersion?: string;    // defaults to v20.0
 }
 ```
 
@@ -76,18 +67,17 @@ interface WhatsAppConfig {
 1. **Create a Meta App.** Go to [developers.facebook.com](https://developers.facebook.com) → My Apps → **Create App** → Business type.
 2. **Add the WhatsApp product** to your app → Set up.
 3. **Copy test credentials** from the **API Setup** tab:
-   - **Phone number ID** (the long numeric one, NOT the human-readable phone) → `WHATSAPP_PHONE_NUMBER_ID`
+   - **Phone number ID** (long numeric, NOT the human phone) → `WHATSAPP_PHONE_NUMBER_ID`
    - **Temporary access token** (24h) → `WHATSAPP_ACCESS_TOKEN`
 4. **Get the App Secret.** Settings → Basic → Show next to App Secret → `META_APP_SECRET`.
-5. **Pick a verify token.** Any random string. Use the same value here and in the webhook config form → `META_VERIFY_TOKEN`.
-6. **Add a test recipient.** API Setup → "To" dropdown → Manage phone number list → add your personal WhatsApp number (test mode allows up to 5).
+5. **Pick a verify token.** Any random string → `META_VERIFY_TOKEN`.
+6. **Add a test recipient.** API Setup → "To" dropdown → Manage phone number list → add your personal WhatsApp number (max 5 in test mode).
 7. **Subscribe the webhook.** WhatsApp → **Configuration** tab:
    - Callback URL: `<PUBLIC_URL>/webhook/whatsapp`
-   - Verify token: same value as `META_VERIFY_TOKEN`
+   - Verify token: same as `META_VERIFY_TOKEN`
    - Click **Verify and Save** (your server must be running)
    - Webhook fields → Subscribe to `messages`
-
-8. **Test.** From your personal WhatsApp, message the test number. Your bot replies via `hub.on('message', ...)`.
+8. **Test.** Message the test number from your personal WhatsApp.
 
 > **Production tokens.** The 24-hour token works for testing only. For production, create a System User token: Business Settings → Users → **System Users** → create one → Generate Token with scopes `whatsapp_business_messaging` and `whatsapp_business_management`. System User tokens don't expire.
 
@@ -101,13 +91,13 @@ interface WhatsAppConfig {
 | audio         | ✓         |
 | file          | ✓         |
 | location      | ✓         |
-| buttons       | ✓         |
+| buttons       | ✓ (max 3, 20-char labels) |
 | quick replies | ✓         |
 | templates     | ✓         |
 | reactions     | ✓         |
 | typing        | —         |
 
-WhatsApp interactive buttons are capped at 3 buttons with 20-char labels. The adapter silently truncates to fit instead of failing with cryptic Cloud API errors.
+The adapter silently truncates button counts and label lengths to fit Meta's limits.
 
 ## The 24-hour window
 
@@ -152,7 +142,7 @@ WhatsApp requires the URL to be publicly accessible HTTPS, or you can upload fir
 ```typescript
 const adapter = hub.getAdapter('whatsapp');
 const ref = await adapter.uploadMedia({
-  data: fs.readFileSync('./cat.png'),
+  data: new Uint8Array(/* image bytes */),
   mimeType: 'image/png',
 });
 
@@ -162,6 +152,8 @@ await hub.send({
   content: { type: 'image', mediaRef: ref, caption: 'meow' },
 });
 ```
+
+`MediaFile.data` accepts `Uint8Array | Blob | ReadableStream<Uint8Array>` — pass whichever your environment naturally produces.
 
 ### Interactive buttons
 
@@ -182,14 +174,24 @@ await hub.send({
 
 User taps a button → you receive a text message whose `content.text` equals the button's `id`.
 
+## Delivery receipts
+
+WhatsApp delivers status updates (delivered/read/failed) as separate webhook events. The hub's standard webhook handler ignores these for `hub.on('message')` purposes — if you need granular delivery tracking, use `adapter.parseStatuses(rawBody)`:
+
+```typescript
+const adapter = hub.getAdapter('whatsapp') as WhatsAppAdapter;
+const receipts = adapter.parseStatuses(req.body);
+// [{ status: 'delivered', messageId: '...', timestamp: '...' }, ...]
+```
+
 ## Common pitfalls
 
 - **`(#131047)` re-engagement message**: you're outside the 24-hour window. Use a template.
-- **`(#131030)` recipient phone not in allowed list**: in test mode, recipients must be added under Manage phone number list. Or go through business verification to remove the limit.
-- **`Invalid signature`**: your `appSecret` is wrong, OR your Express setup isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
-- **Verify handshake fails**: `META_VERIFY_TOKEN` must match byte-for-byte between code and the form in the Meta dashboard. Server must be reachable at the public URL when you click Verify.
+- **`(#131030)` recipient phone not in allowed list**: in test mode, recipients must be added under Manage phone number list. Business verification removes the limit.
+- **`InvalidSignature`**: wrong `appSecret`, OR your Express setup isn't capturing the raw body. The `verify` callback in `express.json()` is essential.
+- **Verify handshake fails**: `META_VERIFY_TOKEN` must match byte-for-byte between code and the form in the Meta dashboard. Server must be reachable when you click Verify.
 - **Template send fails with `(#132001)`**: template name or language code doesn't match an approved template. Templates are case-sensitive.
-- **Token expired after 24h**: replace the temporary access token with a System User token (see Setup → Production tokens).
+- **Token expired after 24h**: replace the temporary access token with a System User token.
 
 ## Documentation
 

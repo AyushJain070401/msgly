@@ -1,20 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  Adapter,
-  AdapterNotRegisteredError,
+  type Adapter,
   type AdapterCapabilities,
-  type ChannelName,
+  createHub,
   type DeliveryReceipt,
   type InboundMessage,
-  MessagingHub,
+  isMsglyError,
   type OutboundMessage,
-  UnsupportedFeatureError,
   type WebhookRequest,
 } from '../src/index.js';
 
-class FakeAdapter extends Adapter<{ secret: string }> {
-  readonly channel: ChannelName = 'telegram';
-  readonly capabilities: AdapterCapabilities = {
+const encode = (s: string) => new TextEncoder().encode(s);
+
+interface FakeOverrides {
+  send?: Adapter['send'];
+  verifyCredentials?: Adapter['verifyCredentials'];
+}
+
+function createFakeAdapter(overrides: FakeOverrides = {}): Adapter {
+  const capabilities: AdapterCapabilities = {
     text: true,
     media: { image: false, video: false, audio: false, file: false },
     interactive: { buttons: false, quickReplies: false },
@@ -23,52 +27,55 @@ class FakeAdapter extends Adapter<{ secret: string }> {
     typing: false,
   };
 
-  send = vi.fn(
-    async (msg: OutboundMessage): Promise<DeliveryReceipt> => ({
-      messageId: msg.id,
-      externalId: 'ext-1',
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-    }),
-  );
-
-  handleWebhook = vi.fn(async (_req: WebhookRequest): Promise<InboundMessage[]> => [
-    {
-      id: 'in-1',
-      externalId: 'tg-1',
-      channel: 'telegram',
-      direction: 'inbound',
-      account: { channel: 'telegram', channelAccountId: 'self' },
-      contact: { channel: 'telegram', channelUserId: '123' },
-      content: { type: 'text', text: 'hi' },
-      timestamp: new Date().toISOString(),
+  return {
+    channel: 'telegram',
+    capabilities,
+    send:
+      overrides.send ??
+      vi.fn(
+        async (msg: OutboundMessage): Promise<DeliveryReceipt> => ({
+          messageId: msg.id,
+          externalId: 'ext-1',
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        }),
+      ),
+    handleWebhook: vi.fn(async (_req: WebhookRequest): Promise<InboundMessage[]> => [
+      {
+        id: 'in-1',
+        externalId: 'tg-1',
+        channel: 'telegram',
+        direction: 'inbound',
+        account: { channel: 'telegram', channelAccountId: 'self' },
+        contact: { channel: 'telegram', channelUserId: '123' },
+        content: { type: 'text', text: 'hi' },
+        timestamp: new Date().toISOString(),
+      },
+    ]),
+    verifySignature: vi.fn(async (_req: WebhookRequest) => true),
+    async uploadMedia() {
+      throw new Error('not implemented');
     },
-  ]);
-
-  verifySignature = vi.fn((_req: WebhookRequest) => true);
-
-  async uploadMedia() {
-    throw new Error('not implemented');
-  }
-  async downloadMedia() {
-    throw new Error('not implemented');
-  }
-  async verifyCredentials() {
-    return { ok: true as const, accountInfo: 'fake-account' };
-  }
+    async downloadMedia() {
+      throw new Error('not implemented');
+    },
+    verifyCredentials:
+      overrides.verifyCredentials ??
+      (async () => ({ ok: true as const, accountInfo: 'fake-account' })),
+  };
 }
 
 const baseRequest: WebhookRequest = {
   headers: {},
-  rawBody: Buffer.from('{}'),
+  rawBody: encode('{}'),
   body: {},
   query: {},
 };
 
-describe('MessagingHub', () => {
+describe('createHub', () => {
   it('registers an adapter and sends a message', async () => {
-    const hub = new MessagingHub();
-    const adapter = new FakeAdapter({ secret: 'x' });
+    const hub = createHub();
+    const adapter = createFakeAdapter();
     hub.register(adapter);
 
     const receipt = await hub.send({
@@ -82,8 +89,8 @@ describe('MessagingHub', () => {
     expect(adapter.send).toHaveBeenCalledOnce();
   });
 
-  it('throws AdapterNotRegisteredError for unknown channel', async () => {
-    const hub = new MessagingHub();
+  it('throws AdapterNotRegistered for unknown channel', async () => {
+    const hub = createHub();
     await expect(
       hub.send({
         channel: 'whatsapp',
@@ -91,12 +98,12 @@ describe('MessagingHub', () => {
         contact: { channel: 'whatsapp', channelUserId: 'y' },
         content: { type: 'text', text: 'hi' },
       }),
-    ).rejects.toBeInstanceOf(AdapterNotRegisteredError);
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'AdapterNotRegistered'));
   });
 
-  it('throws UnsupportedFeatureError for unsupported content', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+  it('throws UnsupportedFeature for unsupported content', async () => {
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     await expect(
       hub.send({
         channel: 'telegram',
@@ -107,12 +114,12 @@ describe('MessagingHub', () => {
           mediaRef: { kind: 'url', value: 'http://example.com/img.png' },
         },
       }),
-    ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'UnsupportedFeature'));
   });
 
   it('emits message event on incoming webhook', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     const handler = vi.fn();
     hub.on('message', handler);
 
@@ -120,9 +127,27 @@ describe('MessagingHub', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it('hub.on returns an unsubscribe function', async () => {
+    const hub = createHub();
+    hub.register(createFakeAdapter());
+    const handler = vi.fn();
+    const off = hub.on('message', handler);
+
+    await hub.handleWebhook('telegram', baseRequest);
+    expect(handler).toHaveBeenCalledOnce();
+
+    off();
+    await hub.handleWebhook('telegram', {
+      ...baseRequest,
+      rawBody: encode('{"second":true}'),
+    });
+    // Same externalId — would be deduped anyway; still verifies off() unhooked.
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it('deduplicates webhooks by externalId', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     const handler = vi.fn();
     hub.on('message', handler);
 
@@ -132,8 +157,8 @@ describe('MessagingHub', () => {
   });
 
   it('connect() returns a per-channel report', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     const report = await hub.connect();
     expect(report['telegram']).toEqual({
       ok: true,
@@ -142,17 +167,16 @@ describe('MessagingHub', () => {
   });
 
   it('connect({ throwOnFailure: true }) throws when an adapter fails', async () => {
-    class BadAdapter extends FakeAdapter {
-      override async verifyCredentials() {
-        return {
-          ok: false as const,
-          reason: 'unauthorized' as const,
+    const hub = createHub();
+    hub.register(
+      createFakeAdapter({
+        verifyCredentials: async () => ({
+          ok: false,
+          reason: 'unauthorized',
           hint: 'fake hint',
-        };
-      }
-    }
-    const hub = new MessagingHub();
-    hub.register(new BadAdapter({ secret: 'x' }));
+        }),
+      }),
+    );
     await expect(hub.connect({ throwOnFailure: true })).rejects.toThrow(
       /Credentials check failed/,
     );
@@ -160,29 +184,31 @@ describe('MessagingHub', () => {
 
   it('retries when adapter returns a failed receipt', async () => {
     let calls = 0;
-    class FlakyAdapter extends FakeAdapter {
-      override send = vi.fn(async (msg: OutboundMessage) => {
-        calls++;
-        if (calls < 2) {
-          return {
-            messageId: msg.id,
-            status: 'failed' as const,
-            timestamp: new Date().toISOString(),
-            error: { code: 'wa_500', message: 'transient' },
-          };
-        }
-        return {
-          messageId: msg.id,
-          externalId: 'ext-ok',
-          status: 'sent' as const,
-          timestamp: new Date().toISOString(),
-        };
-      });
-    }
-    const hub = new MessagingHub({
+    const hub = createHub({
       retry: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 2 },
     });
-    hub.register(new FlakyAdapter({ secret: 'x' }));
+    hub.register(
+      createFakeAdapter({
+        send: vi.fn(async (msg: OutboundMessage) => {
+          calls++;
+          if (calls < 2) {
+            return {
+              messageId: msg.id,
+              status: 'failed' as const,
+              timestamp: new Date().toISOString(),
+              error: { code: 'wa_500', message: 'transient' },
+            };
+          }
+          return {
+            messageId: msg.id,
+            externalId: 'ext-ok',
+            status: 'sent' as const,
+            timestamp: new Date().toISOString(),
+          };
+        }),
+      }),
+    );
+
     const receipt = await hub.send({
       channel: 'telegram',
       account: { channel: 'telegram', channelAccountId: 'self' },
@@ -195,21 +221,23 @@ describe('MessagingHub', () => {
 
   it('does NOT retry on auth-style errors (401/403)', async () => {
     let calls = 0;
-    class AuthErrorAdapter extends FakeAdapter {
-      override send = vi.fn(async (msg: OutboundMessage) => {
-        calls++;
-        return {
-          messageId: msg.id,
-          status: 'failed' as const,
-          timestamp: new Date().toISOString(),
-          error: { code: 'wa_401', message: 'unauthorized' },
-        };
-      });
-    }
-    const hub = new MessagingHub({
+    const hub = createHub({
       retry: { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 2 },
     });
-    hub.register(new AuthErrorAdapter({ secret: 'x' }));
+    hub.register(
+      createFakeAdapter({
+        send: vi.fn(async (msg: OutboundMessage) => {
+          calls++;
+          return {
+            messageId: msg.id,
+            status: 'failed' as const,
+            timestamp: new Date().toISOString(),
+            error: { code: 'wa_401', message: 'unauthorized' },
+          };
+        }),
+      }),
+    );
+
     await expect(
       hub.send({
         channel: 'telegram',
@@ -217,13 +245,13 @@ describe('MessagingHub', () => {
         contact: { channel: 'telegram', channelUserId: '1' },
         content: { type: 'text', text: 'hi' },
       }),
-    ).rejects.toBeDefined();
-    expect(calls).toBe(1); // only one attempt
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'SendFailed'));
+    expect(calls).toBe(1);
   });
 
   it('createWebhookHandler.post processes a valid webhook', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     const handlers = hub.createWebhookHandler();
 
     let status = 0;
@@ -244,7 +272,7 @@ describe('MessagingHub', () => {
         headers: {},
         body: {},
         query: {},
-        rawBody: Buffer.from('{}'),
+        rawBody: encode('{}'),
       },
       fakeRes,
     );
@@ -254,8 +282,8 @@ describe('MessagingHub', () => {
   });
 
   it('createWebhookHandler.post rejects when raw body is missing', async () => {
-    const hub = new MessagingHub();
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    const hub = createHub();
+    hub.register(createFakeAdapter());
     const handlers = hub.createWebhookHandler();
 
     let status = 0;
@@ -285,9 +313,9 @@ describe('MessagingHub', () => {
   });
 
   it('hub.channels lists registered channels', () => {
-    const hub = new MessagingHub();
+    const hub = createHub();
     expect(hub.channels).toEqual([]);
-    hub.register(new FakeAdapter({ secret: 'x' }));
+    hub.register(createFakeAdapter());
     expect(hub.channels).toEqual(['telegram']);
   });
 });

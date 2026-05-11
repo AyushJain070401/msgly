@@ -1,6 +1,6 @@
 {
   "name": "@msgly/whatsapp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WhatsApp Cloud API adapter for Chatterbox",
   "license": "MIT",
   "type": "module",

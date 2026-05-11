@@ -1,6 +1,6 @@
 {
   "name": "@msgly/instagram",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Instagram Direct adapter for Chatterbox",
   "license": "MIT",
   "type": "module",

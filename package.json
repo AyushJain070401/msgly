@@ -1,6 +1,7 @@
 {
   "name": "msgly",
   "version": "1.0.0",
+  "private": true,
   "description": "Open-source unified messaging library for WhatsApp, Instagram, Messenger, Telegram, and LINE",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",

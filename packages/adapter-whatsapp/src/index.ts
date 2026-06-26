@@ -89,6 +89,13 @@ export interface WhatsAppTokenInfo {
   expiresAt?: number;
   scopes?: string[];
   userId?: string;
+  /**
+   * Granular scope list returned by Meta's /debug_token.
+   * Each entry carries the scope name and the WABA/page IDs the token has
+   * that scope for — useful for auto-discovering the WABA ID during
+   * Facebook Embedded Signup without requiring the user to enter it manually.
+   */
+  granularScopes?: Array<{ scope: string; targetIds?: string[] }>;
 }
 
 // ---------- Adapter interface ----------
@@ -126,6 +133,13 @@ export interface WhatsAppAdapter extends Adapter {
   // ---- Display name ----
 
   /**
+   * Fetch the current verified name and its review status for the configured
+   * phone number. `nameStatus` will be one of: "APPROVED",
+   * "AVAILABLE_WITHOUT_REVIEW", "DECLINED", "PENDING_REVIEW", "NONE".
+   */
+  getDisplayName(): Promise<{ displayName: string; nameStatus: string }>;
+
+  /**
    * Request a display name change. The new name goes through WhatsApp's review
    * process — the returned `decision` may be "APPROVED", "PENDING", or similar.
    */
@@ -138,6 +152,9 @@ export interface WhatsAppAdapter extends Adapter {
    * Must be a 6-digit numeric string.
    */
   setTwoStepPin(pin: string): Promise<void>;
+
+  /** Remove (disable) the two-step verification PIN for the phone number. */
+  removeTwoStepPin(): Promise<void>;
 
   // ---- Message templates ----
 
@@ -170,6 +187,20 @@ export interface WhatsAppAdapter extends Adapter {
   deleteTemplate(templateName: string, templateId?: string): Promise<void>;
 
   // ---- Phone number registration ----
+
+  /**
+   * Add a new phone number to the WABA (step 1 of the registration flow).
+   * After this call, use `requestVerificationCode` → `verifyCode` → `registerPhoneNumber`
+   * to complete activation. Requires `config.wabaId`.
+   */
+  createPhoneNumber(input: {
+    /** Country calling code (e.g. "1" for US, "44" for UK). */
+    cc: string;
+    /** Local phone number without country code or leading zeros. */
+    phoneNumber: string;
+    /** Display name for this number — goes through WhatsApp's review process. */
+    verifiedName: string;
+  }): Promise<{ id: string }>;
 
   /**
    * Request an OTP to verify phone number ownership.
@@ -227,15 +258,49 @@ export interface WhatsAppAdapter extends Adapter {
   }): Promise<void>;
 
   /**
-   * Show a typing indicator to the contact.
-   *
-   * **WhatsApp Cloud API does not natively support a typing bubble.** This
-   * method is a recognised no-op so that code shared across channels
-   * (`await adapter.sendTyping?.(contact)`) compiles and runs without errors.
-   * Callers that need a real "seen" signal should use the WhatsApp read-receipt
-   * endpoint independently.
+   * Unsubscribe the current app from WABA-level webhook events.
+   * Call this when a WhatsApp channel is disconnected to stop delivering webhooks.
+   * Requires `config.wabaId`.
+   */
+  unsubscribeFromWebhook(): Promise<void>;
+
+  /**
+   * Configure which webhook fields the Meta App subscribes to at the app level.
+   * Run once during initial app setup (or to change the field list).
+   * Common fields: `messages`, `message_template_status_update`, `account_alerts`.
+   * Requires `config.appId` + `config.appSecret` (uses app access token internally).
+   */
+  setAppWebhookFields(fields: string[]): Promise<void>;
+
+  /**
+   * Cross-channel no-op for compatibility. WhatsApp's typing bubble requires a
+   * message ID — use `sendTypingIndicator(contact, externalMessageId)` instead.
+   * This method exists so generic hub code (`await adapter.sendTyping?.(contact)`)
+   * compiles without channel-specific branching.
    */
   sendTyping(contact: import('@msgly/core').ContactRef): Promise<void>;
+
+  /**
+   * Show a real typing indicator to the contact in WhatsApp.
+   * Calls `POST /{phoneNumberId}/messages` with `status:"read"` +
+   * `typing_indicator:{type:"text"}` using the inbound `externalMessageId`.
+   * The typing bubble disappears after ~25 seconds or when you send a message.
+   *
+   * @param contact   The contact to show typing to.
+   * @param externalMessageId  The `externalId` of the most recent inbound message
+   *                           from this contact — required by the Cloud API.
+   */
+  sendTypingIndicator(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+  ): Promise<void>;
+
+  /**
+   * Mark an inbound message as read (shows the sender's double-tick as blue).
+   * This is a separate operation from the typing indicator — you can call it
+   * independently to acknowledge receipt without showing a typing bubble.
+   */
+  markAsRead(externalMessageId: string): Promise<void>;
 
   // ---- Token introspection ----
 
@@ -245,6 +310,27 @@ export interface WhatsAppAdapter extends Adapter {
    * Requires `config.appId` and `config.appSecret` (used as the app access token).
    */
   debugToken(tokenToInspect?: string): Promise<WhatsAppTokenInfo>;
+
+  /**
+   * Exchange a short-lived authorisation code obtained from Facebook's Embedded
+   * Signup flow for a permanent user/system-user access token.
+   * Calls `GET /oauth/access_token` with the app credentials.
+   * Requires `config.appId` and `config.appSecret`.
+   */
+  exchangeCodeForToken(input: {
+    code: string;
+    redirectUri?: string;
+  }): Promise<{ accessToken: string; tokenType: string; expiresIn?: number }>;
+
+  /**
+   * Like `verifySignature` but returns the failure reason, making it easier to
+   * debug 403s in production: `'no_secret'` | `'no_signature'` |
+   * `'bad_format'` | `'mismatch'`.
+   */
+  verifySignatureVerbose(req: import('@msgly/core').WebhookRequest): Promise<{
+    ok: boolean;
+    reason?: 'no_secret' | 'no_signature' | 'bad_format' | 'mismatch';
+  }>;
 }
 
 const GRAPH_API = 'https://graph.facebook.com';
@@ -388,27 +474,31 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
       };
     }
 
-    case 'template':
+    case 'template': {
+      // `components` wins over `variables` when both are present (pass-through for
+      // rich templates with headers, URL buttons, quick-reply payloads, etc.)
+      const templateComponents: unknown[] | undefined = content.components
+        ? content.components
+        : content.variables
+          ? [
+              {
+                type: 'body',
+                parameters: Object.values(content.variables).map((v) => ({
+                  type: 'text',
+                  text: v,
+                })),
+              },
+            ]
+          : undefined;
       return {
         type: 'template',
         template: {
           name: content.templateName,
           language: { code: content.language },
-          ...(content.variables
-            ? {
-                components: [
-                  {
-                    type: 'body',
-                    parameters: Object.values(content.variables).map((v) => ({
-                      type: 'text',
-                      text: v,
-                    })),
-                  },
-                ],
-              }
-            : {}),
+          ...(templateComponents ? { components: templateComponents } : {}),
         },
       };
+    }
 
     default:
       throw new Error('Unsupported content type for WhatsApp');
@@ -476,6 +566,36 @@ function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
             ...(m.location.address ? { address: m.location.address } : {}),
           }
         : null;
+    case 'sticker':
+      return m.sticker
+        ? {
+            type: 'image',
+            mediaRef: {
+              kind: 'platform-id',
+              value: m.sticker.id,
+              mimeType: m.sticker.mime_type ?? 'image/webp',
+            },
+          }
+        : null;
+    case 'contacts': {
+      if (!m.contacts?.length) return null;
+      const names = m.contacts
+        .map((c) => c.name?.formatted_name ?? c.name?.first_name ?? '')
+        .filter(Boolean);
+      return { type: 'text', text: names.join(', ') || 'Shared contact' };
+    }
+    case 'reaction':
+      // Empty emoji = reaction removed. Return null to skip no-op removals,
+      // or a text message with the emoji so the bot pipeline can act on reactions.
+      return m.reaction?.emoji
+        ? { type: 'text', text: m.reaction.emoji }
+        : null;
+    case 'order':
+      if (!m.order) return null;
+      return {
+        type: 'text',
+        text: `Order from catalog ${m.order.catalog_id}${m.order.text ? ': ' + m.order.text : ''}`,
+      };
     case 'button':
     case 'interactive':
       if (m.button?.text) return { type: 'text', text: m.button.text };
@@ -483,6 +603,19 @@ function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
         return { type: 'text', text: m.interactive.button_reply.title };
       if (m.interactive?.list_reply?.title)
         return { type: 'text', text: m.interactive.list_reply.title };
+      if (m.interactive?.type === 'nfm_reply') {
+        const nfm = m.interactive.nfm_reply;
+        const body = nfm?.body?.text ?? '';
+        const parsed = nfm?.response_json
+          ? (() => { try { return JSON.stringify(JSON.parse(nfm.response_json)); } catch { return nfm.response_json; } })()
+          : '';
+        return { type: 'text', text: body || parsed || 'Flow response' };
+      }
+      return null;
+    case 'system':
+    case 'unsupported':
+      // System messages (number changes, identity updates) and unsupported types
+      // are not user-initiated messages. Return null to skip them in the pipeline.
       return null;
     default:
       return null;
@@ -582,6 +715,11 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
             m.interactive?.list_reply?.id ??
             m.button?.payload;
 
+          const reactionMeta =
+            m.type === 'reaction' && m.reaction
+              ? { reactionEmoji: m.reaction.emoji ?? null, reactedToMessageId: m.reaction.message_id }
+              : null;
+
           messages.push({
             id: randomId(),
             externalId: m.id,
@@ -603,6 +741,7 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
             ...(interactionId
               ? { interaction: { id: interactionId, data: interactionId } }
               : {}),
+            ...(reactionMeta ? { metadata: reactionMeta } : {}),
           });
         }
       }
@@ -625,10 +764,11 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
             externalId: s.id,
             status,
             timestamp: new Date(Number(s.timestamp) * 1000).toISOString(),
+            ...(s.recipient_id ? { recipientId: s.recipient_id } : {}),
             ...(s.errors?.[0]
               ? {
                   error: {
-                    code: `wa_${s.errors[0].code}`,
+                    code: String(s.errors[0].code),
                     message: s.errors[0].title ?? 'unknown',
                   },
                 }
@@ -931,6 +1071,17 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
 
   // ---------- Display name ----------
 
+  async function getDisplayName(): Promise<{ displayName: string; nameStatus: string }> {
+    const res = await graphFetch(
+      `/${config.phoneNumberId}?fields=verified_name,display_phone_number,name_status`,
+    );
+    const data = await assertOk(res, 'getDisplayName');
+    return {
+      displayName: ((data['verified_name'] ?? data['display_phone_number'] ?? '') as string),
+      nameStatus: ((data['name_status'] ?? 'UNKNOWN') as string),
+    };
+  }
+
   async function requestDisplayName(newName: string): Promise<{ decision: string }> {
     const res = await graphFetch(`/${config.phoneNumberId}/request_display_name`, {
       method: 'POST',
@@ -948,6 +1099,11 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
       body: JSON.stringify({ pin }),
     });
     await assertOk(res, 'setTwoStepPin');
+  }
+
+  async function removeTwoStepPin(): Promise<void> {
+    const res = await graphFetch(`/${config.phoneNumberId}/pin`, { method: 'DELETE' });
+    await assertOk(res, 'removeTwoStepPin');
   }
 
   // ---------- Templates ----------
@@ -1016,6 +1172,24 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
   }
 
   // ---------- Phone number registration ----------
+
+  async function createPhoneNumber(input: {
+    cc: string;
+    phoneNumber: string;
+    verifiedName: string;
+  }): Promise<{ id: string }> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(`/${wabaId}/phone_numbers`, {
+      method: 'POST',
+      body: JSON.stringify({
+        cc: input.cc,
+        phone_number: input.phoneNumber,
+        verified_name: input.verifiedName,
+      }),
+    });
+    const data = await assertOk(res, 'createPhoneNumber');
+    return { id: String(data['id'] ?? '') };
+  }
 
   async function requestVerificationCode(options: {
     codeMethod: 'SMS' | 'VOICE';
@@ -1121,9 +1295,80 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
   }
 
   async function sendTyping(_contact: import('@msgly/core').ContactRef): Promise<void> {
-    // WhatsApp Cloud API has no typing-bubble endpoint.
-    // This is a deliberate no-op so cross-channel code can call
-    // `await adapter.sendTyping?.(contact)` without branching on channel.
+    // Cross-channel compatibility no-op. Use sendTypingIndicator(contact, externalMessageId)
+    // to show a real typing bubble in WhatsApp.
+  }
+
+  async function sendTypingIndicator(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+  ): Promise<void> {
+    const res = await fetch(sendUrl(), {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: contact.channelUserId,
+        status: 'read',
+        message_id: externalMessageId,
+        typing_indicator: { type: 'text' },
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        `[msgly/whatsapp] sendTypingIndicator failed: ${JSON.stringify(data['error'] ?? data)}`,
+      );
+    }
+  }
+
+  async function markAsRead(externalMessageId: string): Promise<void> {
+    const res = await fetch(sendUrl(), {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: externalMessageId,
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        `[msgly/whatsapp] markAsRead failed: ${JSON.stringify(data['error'] ?? data)}`,
+      );
+    }
+  }
+
+  async function unsubscribeFromWebhook(): Promise<void> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(`/${wabaId}/subscribed_apps`, { method: 'DELETE' });
+    await assertOk(res, 'unsubscribeFromWebhook');
+  }
+
+  async function setAppWebhookFields(fields: string[]): Promise<void> {
+    const appId = requireAppId();
+    const appToken = `${appId}|${config.appSecret}`;
+    const params = new URLSearchParams({
+      object: 'whatsapp_business_account',
+      fields: fields.join(','),
+      access_token: appToken,
+    });
+    const res = await fetch(
+      `${apiBase()}/${apiVersion()}/${appId}/subscriptions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      },
+    );
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        `[msgly/whatsapp] setAppWebhookFields failed: ${JSON.stringify(data['error'] ?? data)}`,
+      );
+    }
   }
 
   // ---------- Token introspection ----------
@@ -1137,6 +1382,9 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     );
     const data = await assertOk(res, 'debugToken');
     const d = (data['data'] as Record<string, unknown>) ?? data;
+    const rawGranular = d['granular_scopes'] as
+      | Array<{ scope: string; target_ids?: string[] }>
+      | undefined;
     return {
       appId: d['app_id'] as string | undefined,
       type: d['type'] as string | undefined,
@@ -1144,7 +1392,45 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
       expiresAt: d['expires_at'] as number | undefined,
       scopes: d['scopes'] as string[] | undefined,
       userId: d['user_id'] as string | undefined,
+      granularScopes: rawGranular?.map((gs) => ({ scope: gs.scope, targetIds: gs.target_ids })),
     };
+  }
+
+  async function exchangeCodeForToken(input: {
+    code: string;
+    redirectUri?: string;
+  }): Promise<{ accessToken: string; tokenType: string; expiresIn?: number }> {
+    const appId = requireAppId();
+    const params = new URLSearchParams({
+      client_id: appId,
+      client_secret: config.appSecret,
+      code: input.code,
+      ...(input.redirectUri ? { redirect_uri: input.redirectUri } : {}),
+    });
+    const res = await fetch(
+      `${apiBase()}/${apiVersion()}/oauth/access_token?${params.toString()}`,
+    );
+    const data = await assertOk(res, 'exchangeCodeForToken');
+    return {
+      accessToken: data['access_token'] as string,
+      tokenType: (data['token_type'] ?? 'bearer') as string,
+      expiresIn: data['expires_in'] as number | undefined,
+    };
+  }
+
+  async function verifySignatureVerbose(req: WebhookRequest): Promise<{
+    ok: boolean;
+    reason?: 'no_secret' | 'no_signature' | 'bad_format' | 'mismatch';
+  }> {
+    if (!config.appSecret) return { ok: false, reason: 'no_secret' };
+    const headerValue = req.headers['x-hub-signature-256'];
+    const signatureHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+    if (!signatureHeader) return { ok: false, reason: 'no_signature' };
+    if (!signatureHeader.startsWith('sha256=')) return { ok: false, reason: 'bad_format' };
+    const provided = signatureHeader.slice('sha256='.length);
+    const expected = await hmacSha256Hex(config.appSecret, req.rawBody);
+    if (!constantTimeEqualHex(expected, provided)) return { ok: false, reason: 'mismatch' };
+    return { ok: true };
   }
 
   return {
@@ -1161,12 +1447,15 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     getBusinessProfile,
     updateBusinessProfile,
     uploadProfilePicture,
+    getDisplayName,
     requestDisplayName,
     setTwoStepPin,
+    removeTwoStepPin,
     listTemplates,
     createTemplate,
     editTemplate,
     deleteTemplate,
+    createPhoneNumber,
     requestVerificationCode,
     verifyCode,
     registerPhoneNumber,
@@ -1175,8 +1464,14 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     getWabaInfo,
     getSubscribedApps,
     subscribeToWebhook,
+    unsubscribeFromWebhook,
+    setAppWebhookFields,
     sendTyping,
+    sendTypingIndicator,
+    markAsRead,
     debugToken,
+    exchangeCodeForToken,
+    verifySignatureVerbose,
   };
 }
 
@@ -1215,16 +1510,25 @@ interface WhatsAppInboundMessage {
   video?: { id: string; mime_type?: string; caption?: string };
   audio?: { id: string; mime_type?: string };
   document?: { id: string; mime_type?: string; caption?: string };
+  sticker?: { id: string; mime_type?: string; animated?: boolean };
   location?: {
     latitude: number;
     longitude: number;
     name?: string;
     address?: string;
   };
+  contacts?: Array<{
+    name?: { formatted_name?: string; first_name?: string };
+    phones?: Array<{ phone?: string }>;
+  }>;
+  reaction?: { message_id: string; emoji: string };
+  order?: { catalog_id: string; text?: string; product_items?: unknown[] };
+  referral?: { source_url?: string; source_type?: string; source_id?: string; headline?: string };
   button?: { text: string; payload?: string };
   interactive?: {
     type?: string;
     button_reply?: { id: string; title: string };
     list_reply?: { id: string; title: string };
+    nfm_reply?: { response_json?: string; name?: string; body?: { text?: string } };
   };
 }

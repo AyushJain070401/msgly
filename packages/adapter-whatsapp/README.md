@@ -99,7 +99,7 @@ interface WhatsAppConfig {
 | quick replies | ✓         |
 | templates     | ✓         |
 | reactions     | ✓         |
-| typing        | ✓ (no-op) |
+| typing        | ✓ (`sendTypingIndicator`) |
 
 The adapter silently truncates button counts and label lengths to fit Meta's limits.
 
@@ -124,6 +124,37 @@ await hub.send({
 ```
 
 Variable keys are positional — `'1'` maps to `{{1}}` in the template body.
+
+For templates with an image/video header, URL buttons with a dynamic suffix, or quick-reply button payloads, pass the raw Meta `components` array instead of `variables`:
+
+```typescript
+await hub.send({
+  channel: 'whatsapp',
+  account, contact,
+  content: {
+    type: 'template',
+    templateName: 'promo_with_image',
+    language: 'en_US',
+    // components wins over variables when both are present
+    components: [
+      {
+        type: 'header',
+        parameters: [{ type: 'image', image: { link: 'https://cdn.example.com/promo.jpg' } }],
+      },
+      {
+        type: 'body',
+        parameters: [{ type: 'text', text: 'Ayush' }, { type: 'text', text: '30%' }],
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: 0,
+        parameters: [{ type: 'text', text: 'PROMO30' }],
+      },
+    ],
+  },
+});
+```
 
 ## Sending examples
 
@@ -176,7 +207,7 @@ await hub.send({
 });
 ```
 
-User taps a button → you receive a text message whose `content.text` equals the button's `id`.
+User taps a button → you receive an inbound message where `content.text` is the button's visible label and `interaction.data` is the button's stable `id` — use `interaction.data` for CSAT / postback matching since labels can be localised.
 
 ## Business profile
 
@@ -208,6 +239,10 @@ await adapter.uploadProfilePicture({
 ## Display name
 
 ```typescript
+// Read the current verified name and its review status
+const { displayName, nameStatus } = await adapter.getDisplayName();
+// nameStatus → "APPROVED" | "AVAILABLE_WITHOUT_REVIEW" | "PENDING_REVIEW" | "DECLINED" | "NONE"
+
 // Request a display name change (goes through WhatsApp review)
 const result = await adapter.requestDisplayName('Acme Support');
 // result.decision → "APPROVED" | "PENDING" | "DECLINED"
@@ -218,6 +253,9 @@ const result = await adapter.requestDisplayName('Acme Support');
 ```typescript
 // Set or rotate the 6-digit PIN for the registered phone number
 await adapter.setTwoStepPin('123456');
+
+// Disable two-step verification entirely
+await adapter.removeTwoStepPin();
 ```
 
 ## Message templates
@@ -272,16 +310,23 @@ const info = await adapter.getPhoneNumberInfo();
 
 ## Phone number registration flow
 
-Use this when provisioning a new number for the first time:
+Use this to add a new number to your WABA. Requires `config.wabaId`.
 
 ```typescript
-// 1. Request OTP
+// 1. Add the number to the WABA (returns a phone_number_id)
+const { id } = await adapter.createPhoneNumber({
+  cc: '44',               // country calling code
+  phoneNumber: '7911123456',
+  verifiedName: 'Acme Support',
+});
+
+// 2. Request OTP (use the new id or set phoneNumberId in config)
 await adapter.requestVerificationCode({ codeMethod: 'SMS', language: 'en_US' });
 
-// 2. Verify OTP (received by SMS)
+// 3. Verify OTP received by SMS
 await adapter.verifyCode('123456');
 
-// 3. Register with a two-step PIN
+// 4. Activate with a two-step PIN
 await adapter.registerPhoneNumber('123456');
 ```
 
@@ -306,6 +351,43 @@ await adapter.subscribeToWebhook({
   overrideCallbackUri: 'https://tenant-a.example.com/webhook/whatsapp',
   verifyToken: process.env.META_VERIFY_TOKEN!,
 });
+
+// Unsubscribe when a WhatsApp channel is disconnected (stops webhook delivery)
+await adapter.unsubscribeFromWebhook();
+```
+
+## App-level webhook fields
+
+Run this once during initial app setup to choose which event types the Meta App receives. Requires `config.appId` and `config.appSecret`.
+
+```typescript
+await adapter.setAppWebhookFields([
+  'messages',
+  'message_template_status_update',
+  'account_alerts',
+  'phone_number_name_update',
+  'phone_number_quality_update',
+]);
+```
+
+This is equivalent to ticking fields in the Meta Dashboard → App → Webhooks but can be done programmatically during deployment.
+
+## Facebook Embedded Signup
+
+When using Meta's Embedded Signup widget to let users connect their own WhatsApp numbers, the frontend returns a short-lived auth code that your backend must exchange for a permanent token. Requires `config.appId` and `config.appSecret`.
+
+```typescript
+// Exchange the code returned by the Embedded Signup JS SDK
+const { accessToken, tokenType, expiresIn } = await adapter.exchangeCodeForToken({
+  code: req.query.code as string,
+  redirectUri: 'https://app.example.com/connect/whatsapp/callback', // must match your app settings
+});
+
+// The resulting token is a user token — use debugToken to discover its WABA ID
+const tokenInfo = await adapter.debugToken(accessToken);
+const wabaId = tokenInfo.granularScopes
+  ?.find(s => s.scope === 'whatsapp_business_management')
+  ?.targetIds?.[0];
 ```
 
 ## Token introspection
@@ -315,7 +397,7 @@ Requires `config.appId` and `config.appSecret`.
 ```typescript
 // Inspect the current access token
 const info = await adapter.debugToken();
-// { isValid, type, appId, expiresAt, scopes, userId }
+// { isValid, type, appId, expiresAt, scopes, userId, granularScopes }
 
 // Inspect a different token
 const info2 = await adapter.debugToken(someOtherToken);
@@ -323,31 +405,70 @@ const info2 = await adapter.debugToken(someOtherToken);
 if (!info.isValid) {
   console.error('Token is expired or invalid — rotate it');
 }
+
+// granularScopes: scope → WABA/page IDs the token covers
+// Useful to auto-discover the WABA ID after Embedded Signup:
+const wabaId = info.granularScopes
+  ?.find(s => s.scope === 'whatsapp_business_management')
+  ?.targetIds?.[0];
 ```
 
 ## Typing indicator
 
-`adapter.sendTyping(contact)` exists and is safe to call — it's a deliberate no-op. WhatsApp Cloud API has no typing-bubble endpoint, so this is provided purely for cross-channel compatibility:
+WhatsApp Cloud API added native typing bubbles in 2024. The adapter exposes two methods:
 
 ```typescript
-// Works — silently does nothing on WhatsApp
-await adapter.sendTyping?.(msg.contact);
+// Show a typing bubble to the contact. Requires the externalId of their last inbound message.
+await adapter.sendTypingIndicator(msg.contact, msg.externalId!);
+
 // ... do AI work ...
+
 await hub.send({ channel: 'whatsapp', account, contact, content: { type: 'text', text: reply } });
 ```
 
-If you need a "seen" signal you can call the read-receipt endpoint directly with the inbound `message.externalId`:
+Under the hood this calls `POST /{phoneNumberId}/messages` with `status: "read"` + `typing_indicator: { type: "text" }`. The bubble disappears after ~25 seconds or when you send a message.
+
+For generic cross-channel code that calls `sendTyping?.(contact)` without a message ID, `adapter.sendTyping` is a safe no-op — it won't throw.
+
+### Mark as read (without typing)
+
+To show the blue double-tick without a typing bubble:
 
 ```typescript
-// Mark the inbound message as read (shows blue double-tick to sender)
-await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-  method: 'POST',
-  headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-  body: JSON.stringify({
-    messaging_product: 'whatsapp',
-    status: 'read',
-    message_id: msg.externalId,
-  }),
+await adapter.markAsRead(msg.externalId!);
+```
+
+## Inbound message types
+
+The adapter maps WhatsApp message types to the unified content model:
+
+| WhatsApp type | Unified content | Notes |
+|---------------|-----------------|-------|
+| `text` | `TextContent` | |
+| `image` | `MediaContent` (image) | |
+| `video` | `MediaContent` (video) | |
+| `audio` | `MediaContent` (audio) | |
+| `document` | `MediaContent` (file) | |
+| `sticker` | `MediaContent` (image, `image/webp`) | |
+| `location` | `LocationContent` | |
+| `contacts` | `TextContent` | Formatted contact names |
+| `reaction` | `TextContent` (emoji) | `msg.metadata.reactedToMessageId` + `msg.metadata.reactionEmoji` |
+| `order` | `TextContent` | Catalog + order text summary |
+| `button` | `TextContent` (label) | `msg.interaction.data` = button payload |
+| `interactive` (button_reply) | `TextContent` (label) | `msg.interaction.data` = button ID |
+| `interactive` (list_reply) | `TextContent` (label) | `msg.interaction.data` = option ID |
+| `interactive` (nfm_reply) | `TextContent` | Flow `response_json` content |
+| `system` / `unsupported` | — | Dropped (not user-initiated) |
+
+For reactions, check `msg.metadata`:
+
+```typescript
+hub.on('message', (msg) => {
+  if (msg.metadata?.reactedToMessageId) {
+    const emoji = msg.metadata.reactionEmoji as string;
+    const reactedId = msg.metadata.reactedToMessageId as string;
+    // handle reaction
+  }
 });
 ```
 
@@ -358,7 +479,31 @@ WhatsApp delivers status updates (delivered/read/failed) as separate webhook eve
 ```typescript
 const adapter = hub.getAdapter('whatsapp') as WhatsAppAdapter;
 const receipts = adapter.parseStatuses(req.body);
-// [{ status: 'delivered', messageId: '...', timestamp: '...' }, ...]
+// [{
+//   status: 'delivered',
+//   messageId: 'wamid.xxx',
+//   recipientId: '919999999999',  // which contact the status is for
+//   timestamp: '...',
+//   error?: { code: '131000', message: '...' }  // raw Meta error code, no prefix
+// }]
+```
+
+`error.code` is the raw Meta numeric code as a string (e.g. `"131000"`) — no `wa_` prefix.
+
+## Signature verification debugging
+
+`verifySignature(req)` returns a boolean. When you need to know _why_ a webhook is failing:
+
+```typescript
+const result = await adapter.verifySignatureVerbose(req);
+// { ok: false, reason: 'mismatch' | 'no_signature' | 'bad_format' | 'no_secret' }
+
+if (!result.ok) {
+  if (result.reason === 'no_secret')    console.error('appSecret not configured');
+  if (result.reason === 'no_signature') console.error('X-Hub-Signature-256 header missing');
+  if (result.reason === 'bad_format')   console.error('header does not start with sha256=');
+  if (result.reason === 'mismatch')     console.error('HMAC does not match — wrong appSecret or raw body lost');
+}
 ```
 
 ## Common pitfalls

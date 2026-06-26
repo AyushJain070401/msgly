@@ -1,6 +1,6 @@
 {
   "name": "@msgly/line",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "LINE Messaging API adapter for Msgly",
   "license": "MIT",
   "type": "module",

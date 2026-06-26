@@ -4,7 +4,7 @@
 
 `@msgly/core` is the runtime every channel adapter plugs into. You won't usually depend on it directly for application code — install it alongside one or more adapters:
 
-**Chat / messaging**: `@msgly/telegram`, `@msgly/whatsapp`, `@msgly/line`, `@msgly/messenger`, `@msgly/instagram`, `@msgly/discord`, `@msgly/msteams`
+**Chat / messaging**: `@msgly/telegram`, `@msgly/whatsapp`, `@msgly/line`, `@msgly/messenger`, `@msgly/instagram`, `@msgly/discord`, `@msgly/msteams`, `@msgly/slack`, `@msgly/wechat`
 
 **Email**: `@msgly/gmail`, `@msgly/outlook`
 
@@ -75,7 +75,7 @@ interface UnifiedMessage {
   id: string;                  // library-generated UUID, stable across retries
   externalId?: string;         // the platform's own message id
   channel: ChannelName;        // 'telegram' | 'whatsapp' | 'line' | 'messenger' | 'instagram'
-                               //   | 'discord' | 'msteams' | 'gmail' | 'outlook'
+                               //   | 'discord' | 'msteams' | 'slack' | 'wechat' | 'gmail' | 'outlook'
   account: AccountRef;         // your business identity on that channel
   contact: ContactRef;         // the end user
   content: MessageContent;     // discriminated union, see below
@@ -111,7 +111,10 @@ type MessageContent =
       /** 'inline' (default) = callback_data buttons. 'reply' = sends actual text (Telegram ReplyKeyboardMarkup). */
       keyboardType?: 'inline' | 'reply' }
   | { type: 'template'; templateName: string; language: string;
-      variables?: Record<string, string> };
+      /** Positional body variables — `'1'` maps to `{{1}}`. */
+      variables?: Record<string, string>;
+      /** Rich component pass-through (headers, URL buttons, media). Wins over variables. */
+      components?: unknown[] };
 ```
 
 ### Message formatting
@@ -328,7 +331,9 @@ Cross-channel matrix:
 | quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | ✓      | —     | —       |
 | templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —      | —     | —       |
 | reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —      | —     | —       |
-| typing         | ✓        | —        | —    | ✓         | ✓         | —       | ✓     | —     | —      | —     | —       |
+| typing         | ✓        | ✓†       | —    | ✓         | ✓         | —       | ✓     | —     | —      | —     | —       |
+
+† WhatsApp requires the inbound message's `externalId` — use `adapter.sendTypingIndicator(contact, externalMessageId)` rather than the generic `sendTyping(contact)`.
 
 Email adapters (Gmail, Outlook) are text-only in v1 — inbound attachments come through as best-effort plain-text body extraction, and outbound media is not yet supported.
 
@@ -466,6 +471,8 @@ Server-side webhook handling needs the raw request bytes — most frameworks exp
 | WhatsApp         | `@msgly/whatsapp`  | `X-Hub-Signature-256` HMAC                    | Meta WhatsApp Cloud API                      |
 | Discord          | `@msgly/discord`   | Ed25519 over `timestamp + rawBody`            | HTTP Interactions (slash commands + buttons) |
 | Microsoft Teams  | `@msgly/msteams`   | RS256 JWT against Bot Framework JWKS          | Azure Bot resource + Teams channel           |
+| Slack            | `@msgly/slack`     | HMAC-SHA256 `X-Slack-Signature`               | Slack App — Events API + Block Kit           |
+| WeChat           | `@msgly/wechat`    | SHA-1 `signature` query param                 | WeChat Official Account (Service Account)    |
 | Gmail            | `@msgly/gmail`     | RS256 OIDC JWT (or shared token)              | Pub/Sub push subscription, OAuth refresh token |
 | Outlook / M365   | `@msgly/outlook`   | `clientState` shared secret, constant-time    | Graph change-notification subscription       |
 

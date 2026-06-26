@@ -91,7 +91,16 @@ export interface TemplateContent {
   type: 'template';
   templateName: string;
   language: string;
+  /** Shorthand for simple body-only templates — maps to positional {{1}}, {{2}} parameters. */
   variables?: Record<string, string>;
+  /**
+   * Rich template components — headers, buttons with payloads, media headers.
+   * Pass-through: the adapter forwards these directly to the platform's native
+   * `components` array. Use this for templates with image/video headers, URL
+   * buttons with dynamic suffixes, or quick-reply button payloads.
+   * Shape is platform-specific (WhatsApp Cloud API component objects).
+   */
+  components?: unknown[];
 }
 
 export type MessageContent =
@@ -177,5 +186,11 @@ export interface DeliveryReceipt {
   externalId?: string;
   status: DeliveryStatus;
   timestamp: string;
-  error?: { code: string; message: string };
+  /** The contact (recipient) this status refers to — useful for multi-conversation reconciliation. */
+  recipientId?: string;
+  error?: {
+    /** Raw platform error code (e.g. "131000" on WhatsApp). No prefix applied. */
+    code: string;
+    message: string;
+  };
 }

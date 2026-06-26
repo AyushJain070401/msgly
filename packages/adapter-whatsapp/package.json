@@ -1,6 +1,6 @@
 {
   "name": "@msgly/whatsapp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "WhatsApp Cloud API adapter for Msgly",
   "license": "MIT",
   "type": "module",

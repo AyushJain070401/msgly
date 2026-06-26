@@ -212,9 +212,30 @@ export interface WhatsAppAdapter extends Adapter {
    * Subscribe the current app to WABA-level webhook events.
    * Required once per app/WABA pair — after this call, WhatsApp delivers
    * webhook events to the app's configured callback URL.
+   *
+   * Pass `overrideCallbackUri` to route this WABA's events to a different URL
+   * than the app-level default — useful for per-tenant or per-channel routing.
+   * When set, `verifyToken` is required for the GET handshake on that URL.
+   *
    * Requires `config.wabaId`.
    */
-  subscribeToWebhook(): Promise<void>;
+  subscribeToWebhook(options?: {
+    /** Per-WABA override URL (overrides the app-level callback URL). */
+    overrideCallbackUri?: string;
+    /** Verify token for the GET handshake on `overrideCallbackUri`. */
+    verifyToken?: string;
+  }): Promise<void>;
+
+  /**
+   * Show a typing indicator to the contact.
+   *
+   * **WhatsApp Cloud API does not natively support a typing bubble.** This
+   * method is a recognised no-op so that code shared across channels
+   * (`await adapter.sendTyping?.(contact)`) compiles and runs without errors.
+   * Callers that need a real "seen" signal should use the WhatsApp read-receipt
+   * endpoint independently.
+   */
+  sendTyping(contact: import('@msgly/core').ContactRef): Promise<void>;
 
   // ---- Token introspection ----
 
@@ -1084,10 +1105,25 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     return raw.map((a) => ({ id: String(a['id'] ?? ''), name: a['name'] as string | undefined }));
   }
 
-  async function subscribeToWebhook(): Promise<void> {
+  async function subscribeToWebhook(options?: {
+    overrideCallbackUri?: string;
+    verifyToken?: string;
+  }): Promise<void> {
     const wabaId = requireWabaId();
-    const res = await graphFetch(`/${wabaId}/subscribed_apps`, { method: 'POST' });
+    const body: Record<string, unknown> = {};
+    if (options?.overrideCallbackUri) body['override_callback_uri'] = options.overrideCallbackUri;
+    if (options?.verifyToken) body['verify_token'] = options.verifyToken;
+    const res = await graphFetch(`/${wabaId}/subscribed_apps`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
     await assertOk(res, 'subscribeToWebhook');
+  }
+
+  async function sendTyping(_contact: import('@msgly/core').ContactRef): Promise<void> {
+    // WhatsApp Cloud API has no typing-bubble endpoint.
+    // This is a deliberate no-op so cross-channel code can call
+    // `await adapter.sendTyping?.(contact)` without branching on channel.
   }
 
   // ---------- Token introspection ----------
@@ -1139,6 +1175,7 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     getWabaInfo,
     getSubscribedApps,
     subscribeToWebhook,
+    sendTyping,
     debugToken,
   };
 }

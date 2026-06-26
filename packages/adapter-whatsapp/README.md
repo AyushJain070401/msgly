@@ -99,7 +99,7 @@ interface WhatsAppConfig {
 | quick replies | ✓         |
 | templates     | ✓         |
 | reactions     | ✓         |
-| typing        | —         |
+| typing        | ✓ (no-op) |
 
 The adapter silently truncates button counts and label lengths to fit Meta's limits.
 
@@ -299,6 +299,13 @@ const apps = await adapter.getSubscribedApps();
 
 // Subscribe this app to WABA-level events (run once during deployment)
 await adapter.subscribeToWebhook();
+
+// Per-WABA routing: override the callback URL for this specific WABA.
+// Use this when one Meta App serves multiple tenants with different webhook URLs.
+await adapter.subscribeToWebhook({
+  overrideCallbackUri: 'https://tenant-a.example.com/webhook/whatsapp',
+  verifyToken: process.env.META_VERIFY_TOKEN!,
+});
 ```
 
 ## Token introspection
@@ -316,6 +323,32 @@ const info2 = await adapter.debugToken(someOtherToken);
 if (!info.isValid) {
   console.error('Token is expired or invalid — rotate it');
 }
+```
+
+## Typing indicator
+
+`adapter.sendTyping(contact)` exists and is safe to call — it's a deliberate no-op. WhatsApp Cloud API has no typing-bubble endpoint, so this is provided purely for cross-channel compatibility:
+
+```typescript
+// Works — silently does nothing on WhatsApp
+await adapter.sendTyping?.(msg.contact);
+// ... do AI work ...
+await hub.send({ channel: 'whatsapp', account, contact, content: { type: 'text', text: reply } });
+```
+
+If you need a "seen" signal you can call the read-receipt endpoint directly with the inbound `message.externalId`:
+
+```typescript
+// Mark the inbound message as read (shows blue double-tick to sender)
+await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+  body: JSON.stringify({
+    messaging_product: 'whatsapp',
+    status: 'read',
+    message_id: msg.externalId,
+  }),
+});
 ```
 
 ## Delivery receipts

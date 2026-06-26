@@ -1,6 +1,6 @@
 {
   "name": "@msgly/gmail",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Gmail adapter for Msgly — receive and reply to emails via Gmail API + Pub/Sub push",
   "license": "MIT",
   "type": "module",

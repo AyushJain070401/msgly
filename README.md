@@ -131,18 +131,18 @@ npm install @msgly/core @msgly/whatsapp @msgly/telegram
 
 ```typescript
 import express from 'express';
-import { MessagingHub } from '@msgly/core';
-import { TelegramAdapter } from '@msgly/telegram';
-import { WhatsAppAdapter } from '@msgly/whatsapp';
+import { createHub } from '@msgly/core';
+import { createTelegramAdapter } from '@msgly/telegram';
+import { createWhatsAppAdapter } from '@msgly/whatsapp';
 
-const hub = new MessagingHub();
+const hub = createHub();
 
-hub.register(new TelegramAdapter({
+hub.register(createTelegramAdapter({
   botToken: process.env.TELEGRAM_BOT_TOKEN!,
   webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET!,
 }));
 
-hub.register(new WhatsAppAdapter({
+hub.register(createWhatsAppAdapter({
   phoneNumberId: process.env.WA_PHONE_ID!,
   accessToken: process.env.WA_TOKEN!,
   appSecret: process.env.META_APP_SECRET!,
@@ -164,7 +164,7 @@ hub.on('message', async (msg) => {
 });
 
 const app = express();
-app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = buf) }));
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
 
 // One built-in handler for all channels: GET (Meta handshake) + POST (dispatch)
 const handlers = hub.createWebhookHandler();
@@ -203,7 +203,7 @@ Every adapter ships a `verifyCredentials()` that calls the platform's whoami end
 Sends are wrapped in exponential-backoff retry with equal jitter. The hub distinguishes retryable (network errors, 5xx) from non-retryable (401/403/404 — your token is bad, retrying won't fix it):
 
 ```typescript
-const hub = new MessagingHub({
+const hub = createHub({
   retry: { maxAttempts: 5, initialDelayMs: 200, maxDelayMs: 4000 },
 });
 ```
@@ -213,7 +213,7 @@ const hub = new MessagingHub({
 The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle:
 
 ```typescript
-import { UnsupportedFeatureError } from '@msgly/core';
+import { isMsglyError } from '@msgly/core';
 
 try {
   await hub.send({
@@ -222,7 +222,7 @@ try {
     content: { type: 'audio', mediaRef: { kind: 'url', value: '...' } },
   });
 } catch (err) {
-  if (err instanceof UnsupportedFeatureError) {
+  if (isMsglyError(err, 'UnsupportedFeature')) {
     console.log('Instagram does not support audio sends');
   }
 }
@@ -320,12 +320,14 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${PUBLIC_
 Or programmatically (one-liner script):
 
 ```typescript
-import { TelegramAdapter } from '@msgly/telegram';
-const adapter = new TelegramAdapter({
+import { createTelegramAdapter } from '@msgly/telegram';
+const adapter = createTelegramAdapter({
   botToken: process.env.TELEGRAM_BOT_TOKEN!,
   webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
 });
-await adapter.setWebhook(`${process.env.PUBLIC_URL}/webhook/telegram`);
+await adapter.setWebhook(`${process.env.PUBLIC_URL}/webhook/telegram`, {
+  allowedUpdates: ['message', 'edited_message', 'callback_query'],
+});
 ```
 
 **5. Test it.** In Telegram, find your bot by username and send "hello". You should see the echo reply.

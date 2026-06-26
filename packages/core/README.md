@@ -82,7 +82,14 @@ interface UnifiedMessage {
   timestamp: string;           // ISO 8601
   direction: 'inbound' | 'outbound';
   metadata?: Record<string, unknown>;
-  raw?: unknown;               // present on inbound — original platform payload
+
+  // Inbound-only fields:
+  raw?: unknown;               // original platform payload
+  interaction?: {              // present when the user tapped a button / postback
+    id: string;                // platform callback ID — ack within 10 s (Telegram)
+    data?: string;             // button payload (button.id, postback.payload, etc.)
+  };
+  edited?: boolean;            // true if this is an edit of a previous message
 }
 ```
 
@@ -96,7 +103,11 @@ type MessageContent =
   | { type: 'image' | 'video' | 'audio' | 'file';
       mediaRef: MediaReference; caption?: string }
   | { type: 'location'; latitude: number; longitude: number; name?: string; address?: string }
-  | { type: 'interactive'; text: string; buttons: { id: string; label: string }[] }
+  | { type: 'interactive'; text: string;
+      /** 1D = single row (back-compat). 2D = multi-row grid (e.g. Telegram inline keyboard). */
+      buttons: { id: string; label: string }[] | { id: string; label: string }[][];
+      /** 'inline' (default) = callback_data buttons. 'reply' = sends actual text (Telegram ReplyKeyboardMarkup). */
+      keyboardType?: 'inline' | 'reply' }
   | { type: 'template'; templateName: string; language: string;
       variables?: Record<string, string> };
 ```
@@ -271,7 +282,7 @@ Cross-channel matrix:
 | quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | —       |
 | templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —       |
 | reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —       |
-| typing         | ✓        | —        | —    | ✓         | —         | —       | ✓     | —     | —       |
+| typing         | ✓        | —        | —    | ✓         | ✓         | —       | ✓     | —     | —       |
 
 Email adapters (Gmail, Outlook) are text-only in v1 — inbound attachments come through as best-effort plain-text body extraction, and outbound media is not yet supported.
 
@@ -364,6 +375,9 @@ export function createMyAdapter(config: MyConfig): Adapter {
       // return { body, contentType } for non-JSON responses (text/plain etc.)
       return null;
     },
+
+    // Optional — send a typing indicator (implement when the platform supports it):
+    async sendTyping(contact: ContactRef) { /* e.g. sendChatAction(contact.channelUserId, 'typing') */ },
 
     // Optional lifecycle hooks:
     async start() { /* ... */ },

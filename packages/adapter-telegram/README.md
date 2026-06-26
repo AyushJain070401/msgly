@@ -82,12 +82,14 @@ interface TelegramConfig {
    curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=<PUBLIC_URL>/webhook/telegram&secret_token=$TELEGRAM_WEBHOOK_SECRET"
    ```
 
-   Or programmatically — the adapter exposes a helper:
+   Or programmatically — the adapter exposes a helper. Pass `allowedUpdates` to ensure inline button taps (`callback_query`) and edited messages are delivered:
 
    ```typescript
    const adapter = createTelegramAdapter({ botToken, webhookSecret });
    hub.register(adapter);
-   await adapter.setWebhook('https://my-app.example.com/webhook/telegram');
+   await adapter.setWebhook('https://my-app.example.com/webhook/telegram', {
+     allowedUpdates: ['message', 'edited_message', 'callback_query'],
+   });
    ```
 
 5. Test by messaging your bot in Telegram. You'll see the inbound message arrive on `hub.on('message', ...)`.
@@ -124,7 +126,7 @@ await hub.send({
 });
 ```
 
-### Inline buttons
+### Inline buttons (single row)
 
 ```typescript
 await hub.send({
@@ -141,7 +143,60 @@ await hub.send({
 });
 ```
 
-When the user taps a button, your `hub.on('message', ...)` handler receives a text message whose `content.text` matches the button's `id`.
+When the user taps a button, your `hub.on('message', ...)` handler receives a message with `content.text` equal to the button's `id` and an `interaction` field:
+
+```typescript
+hub.on('message', async (msg) => {
+  if (msg.interaction) {
+    // Dismiss the loading spinner on the button (must be done within 10 s)
+    const adapter = hub.getAdapter('telegram') as TelegramAdapter;
+    await adapter.answerCallbackQuery(msg.interaction.id);
+
+    console.log('button tapped:', msg.interaction.data); // the button id
+  }
+});
+```
+
+### Multi-row inline keyboard (2D buttons)
+
+Pass a 2D array to lay out buttons in a grid:
+
+```typescript
+await hub.send({
+  channel: 'telegram',
+  account, contact,
+  content: {
+    type: 'interactive',
+    text: 'Rate us:',
+    buttons: [
+      [{ id: '1', label: '⭐' }, { id: '2', label: '⭐⭐' }, { id: '3', label: '⭐⭐⭐' }],
+      [{ id: '4', label: '⭐⭐⭐⭐' }, { id: '5', label: '⭐⭐⭐⭐⭐' }],
+    ],
+  },
+});
+```
+
+### Reply keyboard (sends text into the chat)
+
+Use `keyboardType: 'reply'` when you want button taps to send real user text through the normal AI loop (suggested prompts, quick replies):
+
+```typescript
+await hub.send({
+  channel: 'telegram',
+  account, contact,
+  content: {
+    type: 'interactive',
+    text: 'What would you like help with?',
+    keyboardType: 'reply',
+    buttons: [
+      { id: 'track', label: 'Track my order' },
+      { id: 'return', label: 'Return an item' },
+    ],
+  },
+});
+```
+
+The user sees a keyboard at the bottom; tapping a button sends that label as a regular message — no `interaction` field, just `content.text`.
 
 ### Location
 
@@ -153,17 +208,51 @@ await hub.send({
 });
 ```
 
+### Typing indicator
+
+```typescript
+const adapter = hub.getAdapter('telegram') as TelegramAdapter;
+await adapter.sendTyping(msg.contact); // shows "typing..." in the chat
+// --- do your AI work here ---
+await hub.send({ channel: 'telegram', account, contact, content: { type: 'text', text: reply } });
+```
+
+Or call `sendChatAction` directly for other actions (`upload_photo`, `record_video`, etc.):
+
+```typescript
+await adapter.sendChatAction(contact.channelUserId, 'upload_photo');
+```
+
+### Webhook diagnostics
+
+```typescript
+const adapter = hub.getAdapter('telegram') as TelegramAdapter;
+const info = await adapter.getWebhookInfo();
+console.log(info.url, info.pendingUpdateCount, info.lastErrorMessage);
+```
+
+### Bot identity
+
+```typescript
+const bot = await adapter.getBotInfo();
+// { id: 123456789, username: 'my_bot', firstName: 'My Bot', ... }
+```
+
+`getBotInfo()` returns structured data (`id`, `username`, `firstName`) — use it to populate operator UIs. `verifyCredentials()` returns a human-readable summary string.
+
 ### Downloading a media attachment
 
 ```typescript
-const adapter = hub.getAdapter('telegram');
+const adapter = hub.getAdapter('telegram') as TelegramAdapter;
 const file = await adapter.downloadMedia({ kind: 'platform-id', value: msg.content.mediaRef.value });
 // file.data is a Uint8Array
 ```
 
 ## Common pitfalls
 
-- **Webhook not firing**: confirm registration with `curl https://api.telegram.org/bot${TOKEN}/getWebhookInfo`. Look at `last_error_message` and `pending_update_count`.
+- **Inline button taps not arriving**: Telegram's default `allowed_updates` excludes `callback_query`. Pass `allowedUpdates: ['message', 'edited_message', 'callback_query']` when calling `setWebhook`.
+- **User sees a loading spinner on tapped buttons forever**: you must call `adapter.answerCallbackQuery(msg.interaction.id)` within 10 seconds of receiving the `callback_query`. Without this call the spinner never dismisses.
+- **Webhook not firing**: confirm registration with `adapter.getWebhookInfo()` (or `curl https://api.telegram.org/bot${TOKEN}/getWebhookInfo`). Look at `lastErrorMessage` and `pendingUpdateCount`.
 - **`{"ok":false,"description":"Wrong response from the webhook"}`**: your server isn't returning 200 in time. The hub returns 200 only after it processes the body — keep your `hub.on('message')` handler fast or move work into a queue.
 - **Webhook signature rejected**: if you set `TELEGRAM_WEBHOOK_SECRET`, you must also pass `secret_token=...` in the `setWebhook` URL. Mismatched values cause `InvalidSignature`.
 - **ngrok URL keeps changing**: free ngrok rotates the URL on each restart. After ngrok restarts, you must re-run `setWebhook` with the new URL.

@@ -43,6 +43,21 @@ const CAPABILITIES: AdapterCapabilities = {
   typing: false,
 };
 
+/**
+ * WhatsApp native markdown formatting helpers.
+ * WhatsApp auto-parses these markers — no `format` hint needed on TextContent.
+ *
+ * @example
+ * content: { type: 'text', text: `${fmt.bold('Hello')} ${fmt.italic('world')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `*${t}*`,
+  italic: (t: string) => `_${t}_`,
+  strikethrough: (t: string) => `~${t}~`,
+  monospace: (t: string) => `\`\`\`${t}\`\`\``,
+  escape: (t: string) => t,
+};
+
 function randomId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();

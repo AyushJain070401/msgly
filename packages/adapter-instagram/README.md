@@ -52,14 +52,20 @@ app.listen(3000);
 
 ```typescript
 interface InstagramConfig {
-  /** IG-enabled Page access token (from Messenger → Instagram Settings). */
+  /** IG-enabled Page access token (from Messenger → Instagram Settings, or via Instagram Login). */
   pageAccessToken: string;
 
-  /** App secret — used for X-Hub-Signature-256 verification. */
+  /** App secret — used for X-Hub-Signature-256 verification and token exchanges. */
   appSecret: string;
 
   /** Your chosen string for the webhook GET handshake. */
   verifyToken: string;
+
+  /**
+   * Facebook App ID (from App Dashboard → General Information → App ID).
+   * Required only when using the Instagram Login OAuth helpers.
+   */
+  appId?: string;
 
   /** Override for tests. Defaults to https://graph.facebook.com. */
   apiBase?: string;
@@ -68,6 +74,64 @@ interface InstagramConfig {
   apiVersion?: string;
 }
 ```
+
+## Authentication
+
+Two ways to obtain a `pageAccessToken`:
+
+### Option A — Facebook Login (traditional)
+
+1. Open your Meta App → Messenger → Instagram Settings → **Generate Token**.
+2. Copy the token and set `INSTAGRAM_PAGE_TOKEN`. This is a short-lived token (~60 days in dev mode). Exchange for a long-lived one via the token debug tool, or use a System User.
+
+### Option B — Instagram Login (new in 0.3.0)
+
+Instagram Login uses `api.instagram.com`/`graph.instagram.com` endpoints and is the preferred approach for apps that need users to log in with their Instagram Business accounts:
+
+```typescript
+import { createInstagramAdapter } from '@msgly/instagram';
+
+const adapter = createInstagramAdapter({
+  appId: process.env.INSTAGRAM_APP_ID!,
+  appSecret: process.env.INSTAGRAM_APP_SECRET!,
+  pageAccessToken: '', // placeholder — will be set after OAuth
+  verifyToken: process.env.META_VERIFY_TOKEN!,
+});
+
+// 1. Redirect user here to grant permissions
+app.get('/auth/instagram', (req, res) => {
+  const url = adapter.getAuthUrl({
+    appId: process.env.INSTAGRAM_APP_ID!,
+    redirectUri: 'https://myapp.example.com/auth/instagram/callback',
+    scopes: ['instagram_business_basic', 'instagram_business_manage_messages'],
+    state: req.session.csrf,
+  });
+  res.redirect(url);
+});
+
+// 2. Exchange the code for a short-lived token, then upgrade to long-lived
+app.get('/auth/instagram/callback', async (req, res) => {
+  const { code } = req.query;
+
+  const short = await adapter.exchangeCode(code as string, {
+    appId: process.env.INSTAGRAM_APP_ID!,
+    appSecret: process.env.INSTAGRAM_APP_SECRET!,
+    redirectUri: 'https://myapp.example.com/auth/instagram/callback',
+  });
+
+  const long = await adapter.getLongLivedToken(short.accessToken);
+  // long.accessToken lasts ~60 days, long.expiresIn is in seconds
+
+  // Persist long.accessToken and refresh before it expires:
+  // await adapter.refreshToken(savedToken) — resets the 60-day clock
+  res.json({ token: long.accessToken, expiresIn: long.expiresIn });
+});
+```
+
+Token lifecycle:
+- **Short-lived**: `exchangeCode()` — ~1 hour
+- **Long-lived**: `getLongLivedToken(short)` — ~60 days
+- **Refreshed**: `refreshToken(long)` — resets to 60 days (call at least 24 h before expiry)
 
 ## Setup (15 minutes)
 
@@ -102,7 +166,7 @@ interface InstagramConfig {
 | quick replies | ✓         |
 | templates     | —         |
 | reactions     | ✓         |
-| typing        | —         |
+| typing        | ✓         |
 
 Instagram does not support audio sends, file attachments, or persistent buttons. Attempts throw a `MsglyError` with `code: 'UnsupportedFeature'`:
 
@@ -157,6 +221,18 @@ await hub.send({
 ```
 
 Rendered as Instagram quick-reply chips. User tap → your `message` handler receives a text message whose `content.text` matches the chosen button's `id`.
+
+## Formatting
+
+Instagram DMs are plain text — markdown and HTML are not rendered. The `fmt` export is provided so code that imports `fmt` from any adapter compiles uniformly; each helper returns the text unchanged:
+
+```typescript
+import { fmt } from '@msgly/instagram';
+
+fmt.bold('Hello')  // → 'Hello'
+fmt.italic('world') // → 'world'
+fmt.link('click', 'https://example.com') // → 'click'
+```
 
 ## Common pitfalls
 

@@ -84,6 +84,50 @@ const CAPABILITIES: AdapterCapabilities = {
   typing: true,
 };
 
+// ---------- MarkdownV2 formatter ----------
+
+const MD_ESCAPE_RE = /([_*[\]()~`>#+\-=|{}.!\\])/g;
+
+function escapeMdV2(text: string): string {
+  return text.replace(MD_ESCAPE_RE, '\\$1');
+}
+
+/**
+ * MarkdownV2 formatting helpers for Telegram.
+ * Pass `format: 'markdown'` on the `TextContent` to activate parsing.
+ *
+ * @example
+ * content: { type: 'text', format: 'markdown',
+ *             text: `${fmt.bold('Hello')} ${fmt.italic('world')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `*${escapeMdV2(t)}*`,
+  italic: (t: string) => `_${escapeMdV2(t)}_`,
+  underline: (t: string) => `__${escapeMdV2(t)}__`,
+  strikethrough: (t: string) => `~${escapeMdV2(t)}~`,
+  spoiler: (t: string) => `||${escapeMdV2(t)}||`,
+  code: (t: string) => `\`${escapeMdV2(t)}\``,
+  pre: (t: string, lang = '') => `\`\`\`${escapeMdV2(lang)}\n${t}\n\`\`\``,
+  link: (t: string, url: string) => `[${escapeMdV2(t)}](${url})`,
+  escape: escapeMdV2,
+};
+
+// ---------- HTML formatter (alternative to MarkdownV2) ----------
+
+/**
+ * HTML formatting helpers for Telegram (use with `format: 'html'`).
+ */
+export const htmlFmt = {
+  bold: (t: string) => `<b>${t}</b>`,
+  italic: (t: string) => `<i>${t}</i>`,
+  underline: (t: string) => `<u>${t}</u>`,
+  strikethrough: (t: string) => `<s>${t}</s>`,
+  spoiler: (t: string) => `<tg-spoiler>${t}</tg-spoiler>`,
+  code: (t: string) => `<code>${t}</code>`,
+  pre: (t: string, lang = '') => lang ? `<pre><code class="language-${lang}">${t}</code></pre>` : `<pre>${t}</pre>`,
+  link: (t: string, url: string) => `<a href="${url}">${t}</a>`,
+};
+
 function randomId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
@@ -118,6 +162,8 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
       case 'text':
         method = 'sendMessage';
         payload = { chat_id: chatId, text: message.content.text };
+        if (message.content.format === 'markdown') payload['parse_mode'] = 'MarkdownV2';
+        else if (message.content.format === 'html') payload['parse_mode'] = 'HTML';
         break;
       case 'image':
         method = 'sendPhoto';

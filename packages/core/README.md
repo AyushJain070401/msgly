@@ -99,7 +99,9 @@ interface UnifiedMessage {
 
 ```typescript
 type MessageContent =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string;
+      /** 'markdown' or 'html' enables native rich-text rendering per channel. */
+      format?: 'plain' | 'markdown' | 'html' }
   | { type: 'image' | 'video' | 'audio' | 'file';
       mediaRef: MediaReference; caption?: string }
   | { type: 'location'; latitude: number; longitude: number; name?: string; address?: string }
@@ -111,6 +113,48 @@ type MessageContent =
   | { type: 'template'; templateName: string; language: string;
       variables?: Record<string, string> };
 ```
+
+### Message formatting
+
+Each adapter exports a `fmt` helper object with channel-native formatting:
+
+```typescript
+import { fmt } from '@msgly/telegram';  // MarkdownV2 escaping
+import { fmt } from '@msgly/discord';   // Discord markdown
+import { fmt } from '@msgly/gmail';     // HTML tags
+import { fmt } from '@msgly/outlook';   // HTML tags
+import { fmt } from '@msgly/msteams';   // Markdown
+import { fmt } from '@msgly/whatsapp';  // WhatsApp markdown
+// Messenger, Instagram, LINE — fmt returns text as-is (plain only)
+```
+
+Pass `format: 'markdown'` or `format: 'html'` on `TextContent` to enable native rendering:
+
+```typescript
+import { fmt } from '@msgly/telegram';
+
+await hub.send({
+  channel: 'telegram',
+  account, contact,
+  content: {
+    type: 'text',
+    format: 'markdown',   // tells the adapter: parse_mode = MarkdownV2
+    text: `${fmt.bold('Order confirmed')} — your tracking number is ${fmt.code('TRK-1234')}`,
+  },
+});
+```
+
+| Adapter     | `format: 'markdown'`                    | `format: 'html'`        | fmt helpers                                 |
+| ----------- | --------------------------------------- | ----------------------- | ------------------------------------------- |
+| Telegram    | `parse_mode: MarkdownV2`                | `parse_mode: HTML`      | bold, italic, underline, strike, code, pre, link, spoiler |
+| WhatsApp    | always-on (auto-parsed)                 | —                       | bold, italic, strikethrough, monospace      |
+| Discord     | always-on (auto-parsed)                 | —                       | bold, italic, underline, strike, code, codeBlock, spoiler, link |
+| Teams       | `textFormat: markdown`                  | `textFormat: markdown`  | bold, italic, strikethrough, code, codeBlock, link |
+| Gmail       | —                                       | `Content-Type: text/html` | bold, italic, underline, strike, code, pre, link, color, br |
+| Outlook     | —                                       | `contentType: HTML`     | bold, italic, underline, strike, code, pre, link, color, br |
+| Messenger   | plain (not supported)                   | —                       | identity functions                          |
+| Instagram   | plain (not supported)                   | —                       | identity functions                          |
+| LINE        | plain (not supported)                   | —                       | identity functions                          |
 
 ### `AccountRef` and `ContactRef`
 

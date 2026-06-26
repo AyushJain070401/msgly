@@ -73,6 +73,26 @@ export interface GmailAdapter extends Adapter {
   stopWatch(): Promise<void>;
 }
 
+/**
+ * HTML formatting helpers for Gmail. Pass `format: 'html'` on TextContent to
+ * send as an HTML email part (Content-Type: text/html).
+ *
+ * @example
+ * content: { type: 'text', format: 'html',
+ *             text: `${fmt.bold('Hello')} ${fmt.link('click here', 'https://example.com')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `<b>${t}</b>`,
+  italic: (t: string) => `<i>${t}</i>`,
+  underline: (t: string) => `<u>${t}</u>`,
+  strikethrough: (t: string) => `<s>${t}</s>`,
+  code: (t: string) => `<code>${t}</code>`,
+  pre: (t: string) => `<pre>${t}</pre>`,
+  link: (t: string, url: string) => `<a href="${url}">${t}</a>`,
+  color: (t: string, hex: string) => `<span style="color:${hex}">${t}</span>`,
+  br: () => '<br>',
+};
+
 const DEFAULT_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DEFAULT_API_BASE = 'https://gmail.googleapis.com';
 const DEFAULT_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -403,15 +423,19 @@ function buildReplyEmail(opts: {
   to: string;
   subject: string;
   body: string;
+  format?: 'plain' | 'markdown' | 'html';
   inReplyTo?: string;
   references?: string;
 }): string {
+  const contentType = opts.format === 'html'
+    ? 'text/html; charset=utf-8'
+    : 'text/plain; charset=utf-8';
   const headers = [
     `From: ${sanitizeHeaderValue(opts.from)}`,
     `To: ${sanitizeHeaderValue(opts.to)}`,
     `Subject: ${sanitizeHeaderValue(opts.subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=utf-8',
+    `Content-Type: ${contentType}`,
     'Content-Transfer-Encoding: 8bit',
     `Date: ${new Date().toUTCString()}`,
   ];
@@ -689,6 +713,7 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
       to: message.contact.channelUserId,
       subject,
       body: message.content.text,
+      format: message.content.format,
       inReplyTo,
       references,
     });

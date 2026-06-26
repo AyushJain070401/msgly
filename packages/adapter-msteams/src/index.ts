@@ -52,6 +52,23 @@ export interface MsTeamsAdapter extends Adapter {
   readonly channel: 'msteams';
 }
 
+/**
+ * Markdown formatting helpers for Microsoft Teams.
+ * Pass `format: 'markdown'` on TextContent to activate rendering.
+ *
+ * @example
+ * content: { type: 'text', format: 'markdown',
+ *             text: `${fmt.bold('Hello')} ${fmt.italic('world')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `**${t}**`,
+  italic: (t: string) => `_${t}_`,
+  strikethrough: (t: string) => `~~${t}~~`,
+  code: (t: string) => `\`${t}\``,
+  codeBlock: (t: string, lang = '') => `\`\`\`${lang}\n${t}\n\`\`\``,
+  link: (t: string, url: string) => `[${t}](${url})`,
+};
+
 const DEFAULT_JWKS_URL = 'https://login.botframework.com/v1/.well-known/keys';
 const DEFAULT_TOKEN_URL =
   'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
@@ -337,7 +354,13 @@ interface TeamsActivity {
 function toTeamsOutbound(content: MessageContent): Record<string, unknown> {
   switch (content.type) {
     case 'text':
-      return { type: 'message', text: content.text };
+      return {
+        type: 'message',
+        text: content.text,
+        ...(content.format === 'markdown' || content.format === 'html'
+          ? { textFormat: 'markdown' }
+          : {}),
+      };
 
     case 'image':
     case 'file': {

@@ -72,6 +72,26 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/**
+ * HTML formatting helpers for Outlook. Pass `format: 'html'` on TextContent
+ * to send as an HTML email body (Graph contentType: 'HTML').
+ *
+ * @example
+ * content: { type: 'text', format: 'html',
+ *             text: `${fmt.bold('Hello')} ${fmt.link('click here', 'https://example.com')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `<b>${t}</b>`,
+  italic: (t: string) => `<i>${t}</i>`,
+  underline: (t: string) => `<u>${t}</u>`,
+  strikethrough: (t: string) => `<s>${t}</s>`,
+  code: (t: string) => `<code>${t}</code>`,
+  pre: (t: string) => `<pre>${t}</pre>`,
+  link: (t: string, url: string) => `<a href="${url}">${t}</a>`,
+  color: (t: string, hex: string) => `<span style="color:${hex}">${t}</span>`,
+  br: () => '<br>',
+};
+
 const DEFAULT_GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const DEFAULT_TENANT = 'common';
 const DEFAULT_TOKEN_URL = (tenant: string) =>
@@ -424,7 +444,10 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
         body: JSON.stringify({
           message: {
             subject,
-            body: { contentType: 'Text', content: message.content.text },
+            body: {
+              contentType: message.content.format === 'html' ? 'HTML' : 'Text',
+              content: message.content.text,
+            },
             toRecipients: [
               { emailAddress: { address: message.contact.channelUserId } },
             ],

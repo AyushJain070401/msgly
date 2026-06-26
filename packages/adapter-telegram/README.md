@@ -126,6 +126,29 @@ await hub.send({
 });
 ```
 
+### Formatted text (MarkdownV2)
+
+```typescript
+import { fmt } from '@msgly/telegram';
+
+await hub.send({
+  channel: 'telegram',
+  account, contact,
+  content: {
+    type: 'text',
+    format: 'markdown',   // enables parse_mode: MarkdownV2
+    text: [
+      fmt.bold('Order #1234 confirmed'),
+      `Tracking: ${fmt.code('TRK-99887')}`,
+      fmt.link('Track your parcel', 'https://track.example.com/TRK-99887'),
+    ].join('\n'),
+  },
+});
+```
+
+Available helpers: `bold`, `italic`, `underline`, `strikethrough`, `spoiler`, `code`, `pre(text, lang?)`, `link(text, url)`, `escape`.
+Use `format: 'html'` with `htmlFmt` if you prefer HTML tags (`htmlFmt.bold`, `htmlFmt.italic`, etc.).
+
 ### Inline buttons (single row)
 
 ```typescript

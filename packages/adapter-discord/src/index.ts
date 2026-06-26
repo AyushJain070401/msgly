@@ -31,6 +31,24 @@ export interface DiscordAdapter extends Adapter {
   readonly channel: 'discord';
 }
 
+/**
+ * Discord markdown formatting helpers. Discord always renders markdown — no
+ * `format` hint is needed on TextContent.
+ *
+ * @example
+ * content: { type: 'text', text: `${fmt.bold('Hello')} ${fmt.code('world')}` }
+ */
+export const fmt = {
+  bold: (t: string) => `**${t}**`,
+  italic: (t: string) => `*${t}*`,
+  underline: (t: string) => `__${t}__`,
+  strikethrough: (t: string) => `~~${t}~~`,
+  spoiler: (t: string) => `||${t}||`,
+  code: (t: string) => `\`${t}\``,
+  codeBlock: (t: string, lang = '') => `\`\`\`${lang}\n${t}\n\`\`\``,
+  link: (t: string, url: string) => `[${t}](${url})`,
+};
+
 const DISCORD_API = 'https://discord.com/api';
 
 const CAPABILITIES: AdapterCapabilities = {

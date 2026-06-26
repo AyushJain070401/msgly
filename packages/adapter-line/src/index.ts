@@ -26,6 +26,19 @@ export interface LineAdapter extends Adapter {
   readonly channel: 'line';
 }
 
+/**
+ * Plain-text formatter for LINE. LINE's Messaging API does not render markdown
+ * in basic text messages — these helpers return text as-is so code that imports
+ * `fmt` from any adapter compiles uniformly.
+ */
+export const fmt = {
+  bold: (t: string) => t,
+  italic: (t: string) => t,
+  strikethrough: (t: string) => t,
+  code: (t: string) => t,
+  link: (t: string, url: string) => `${t} (${url})`,
+};
+
 const LINE_API = 'https://api.line.me';
 const LINE_DATA_API = 'https://api-data.line.me';
 

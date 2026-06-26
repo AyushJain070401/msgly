@@ -18,6 +18,19 @@ const CAPABILITIES: AdapterCapabilities = {
 };
 
 /**
+ * Plain-text formatter for Messenger. The Messenger Platform does not render
+ * markdown or HTML in chat messages — these helpers return text as-is so code
+ * that imports `fmt` from any adapter compiles uniformly.
+ */
+export const fmt = {
+  bold: (t: string) => t,
+  italic: (t: string) => t,
+  strikethrough: (t: string) => t,
+  code: (t: string) => t,
+  link: (t: string, _url: string) => t,
+};
+
+/**
  * Facebook Messenger adapter.
  *
  * The Messenger Platform enforces a 24-hour customer service window. After

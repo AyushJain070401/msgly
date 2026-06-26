@@ -39,6 +39,14 @@ export interface AccountRef {
 export interface TextContent {
   type: 'text';
   text: string;
+  /**
+   * Hint to the adapter that `text` contains markup.
+   * - `'markdown'` — adapters that support rich text enable their native markdown parser.
+   *   Use the per-adapter `fmt` helpers to produce properly escaped strings.
+   * - `'html'` — adapters that support HTML (Gmail, Outlook, Teams) render it; others fall back gracefully.
+   * - `'plain'` (default) — no formatting applied.
+   */
+  format?: 'plain' | 'markdown' | 'html';
 }
 
 export interface MediaContent {

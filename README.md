@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, and Outlook. One API, every channel — chat and email together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, Slack, and WeChat. One API, every channel — chat and email together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,18 +11,20 @@ Building a chatbot or notification system that works across multiple channels me
 
 ## Status
 
-| Channel    | Package                          | Status     |
-| ---------- | -------------------------------- | ---------- |
-| Telegram   | `@msgly/telegram`        | Implemented |
-| LINE       | `@msgly/line`            | Implemented |
-| Messenger  | `@msgly/messenger`       | Implemented |
-| Instagram  | `@msgly/instagram`       | Implemented |
-| WhatsApp   | `@msgly/whatsapp`        | Implemented |
-| Discord    | `@msgly/discord`         | Implemented (HTTP Interactions) |
-| Microsoft Teams | `@msgly/msteams`    | Implemented (Bot Framework) |
-| Gmail      | `@msgly/gmail`           | Implemented (Pub/Sub push, text-only v1) |
-| Outlook / M365 | `@msgly/outlook`     | Implemented (Graph notifications, text-only v1) |
-| Core engine | `@msgly/core`           | Implemented |
+| Channel         | Package               | Status     |
+| --------------- | --------------------- | ---------- |
+| Telegram        | `@msgly/telegram`     | Implemented |
+| LINE            | `@msgly/line`         | Implemented |
+| Messenger       | `@msgly/messenger`    | Implemented |
+| Instagram       | `@msgly/instagram`    | Implemented (+ Instagram Login OAuth) |
+| WhatsApp        | `@msgly/whatsapp`     | Implemented (full Business API) |
+| Discord         | `@msgly/discord`      | Implemented (HTTP Interactions) |
+| Microsoft Teams | `@msgly/msteams`      | Implemented (Bot Framework) |
+| Slack           | `@msgly/slack`        | Implemented (Events API + Block Kit) |
+| WeChat          | `@msgly/wechat`       | Implemented (Official Account) |
+| Gmail           | `@msgly/gmail`        | Implemented (Pub/Sub push, text-only v1) |
+| Outlook / M365  | `@msgly/outlook`      | Implemented (Graph notifications, text-only v1) |
+| Core engine     | `@msgly/core`         | Implemented |
 
 ## 60-second quickstart
 
@@ -248,6 +250,54 @@ await hub.send({
 });
 ```
 
+## WhatsApp Business API
+
+The WhatsApp adapter exposes a full Business API surface beyond basic messaging. Add `wabaId` and `appId` to the config to unlock WABA-level operations:
+
+```typescript
+hub.register(createWhatsAppAdapter({
+  phoneNumberId: process.env.WA_PHONE_ID!,
+  accessToken: process.env.WA_TOKEN!,
+  appSecret: process.env.META_APP_SECRET!,
+  verifyToken: process.env.META_VERIFY_TOKEN!,
+  wabaId: process.env.WA_WABA_ID!,          // for templates, phone list, WABA info
+  appId: process.env.META_APP_ID!,           // for profile picture upload + debugToken
+}));
+```
+
+```typescript
+import type { WhatsAppAdapter } from '@msgly/whatsapp';
+const wa = hub.getAdapter('whatsapp') as WhatsAppAdapter;
+
+// Business profile
+await wa.updateBusinessProfile({ about: 'Fast shipping', vertical: 'RETAIL' });
+await wa.uploadProfilePicture({ data: fs.readFileSync('./logo.jpg'), mimeType: 'image/jpeg' });
+
+// Templates
+const { templates } = await wa.listTemplates();
+const { id } = await wa.createTemplate({
+  name: 'order_shipped', category: 'UTILITY', language: 'en_US',
+  components: [{ type: 'BODY', text: 'Your order {{1}} has shipped!' }],
+});
+await wa.deleteTemplate('order_shipped');
+
+// Phone number registration (for new numbers)
+await wa.requestVerificationCode({ codeMethod: 'SMS', language: 'en_US' });
+await wa.verifyCode('123456');
+await wa.registerPhoneNumber('654321');
+
+// WABA operations
+await wa.subscribeToWebhook();              // run once at deploy
+const waba = await wa.getWabaInfo();
+const numbers = await wa.listPhoneNumbers();
+
+// Token health check
+const token = await wa.debugToken();
+if (!token.isValid) console.error('Rotate your access token!');
+```
+
+See [packages/adapter-whatsapp/README.md](packages/adapter-whatsapp/README.md) for full API reference.
+
 ## Replying to a LINE message with the free reply token
 
 ```typescript
@@ -269,12 +319,16 @@ hub.on('message', async (msg) => {
 No need to hand-craft a curl command:
 
 ```typescript
-const adapter = new TelegramAdapter({
+import { createTelegramAdapter } from '@msgly/telegram';
+
+const adapter = createTelegramAdapter({
   botToken: process.env.TELEGRAM_BOT_TOKEN!,
   webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET!,
 });
 hub.register(adapter);
-await adapter.setWebhook('https://my-app.example.com/webhook/telegram');
+await adapter.setWebhook('https://my-app.example.com/webhook/telegram', {
+  allowedUpdates: ['message', 'edited_message', 'callback_query'],
+});
 ```
 
 ## Connection guide
@@ -433,6 +487,72 @@ You need ONE Meta App that holds all three Meta channels.
 **5. Test.** From your personal WhatsApp, send a message to the test number from API Setup. The example bot will echo back.
 
 > **24-hour window**: free-form replies (text, media) only work within 24h of an inbound user message. Outside that window you must send a pre-approved **template** (`content: { type: 'template', templateName, language, variables }`). Templates are created and approved in Meta dashboard → WhatsApp → Message Templates.
+
+### Slack (10 minutes)
+
+Msgly uses the **Events API** (webhook-based). Both incoming messages and Block Kit button clicks arrive on the same URL — the adapter detects the content type automatically.
+
+**1. Create a Slack app.** Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
+
+**2. Add OAuth scopes.** OAuth & Permissions → Bot Token Scopes → Add:
+- `chat:write` — send messages
+- `channels:history` + `im:history` — read messages in channels and DMs
+- `app_mentions:read` — receive `@YourBot` mentions
+
+**3. Install to your workspace.** OAuth & Permissions → **Install to Workspace** → copy the **Bot User OAuth Token** (`xoxb-...`). Set as `SLACK_BOT_TOKEN`.
+
+**4. Copy the Signing Secret.** Basic Information → App Credentials → Signing Secret. Set as `SLACK_SIGNING_SECRET`.
+
+**5. Enable Events.** Event Subscriptions → enable → Request URL: `<PUBLIC_URL>/webhook/slack`. Subscribe to bot events: `message.channels`, `message.im`, `app_mention`.
+
+**6. Enable Interactivity.** Interactivity & Shortcuts → enable → Request URL: **same URL** `<PUBLIC_URL>/webhook/slack`. This handles Block Kit button clicks.
+
+**7. Re-install** the app to apply the new scopes.
+
+**8. Invite the bot.** In your Slack workspace, `/invite @your-bot` to the channels you want it to read.
+
+**Important**: your Express setup must capture `rawBody` before both JSON and URL-encoded parsers — Slack sends events as JSON but interaction payloads as form-encoded:
+
+```typescript
+app.use(express.json({ verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
+app.use(express.urlencoded({ extended: true, verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)) }));
+```
+
+### WeChat Official Account (15 minutes)
+
+WeChat uses **XML webhooks** and a token-based GET challenge — different from every other adapter. You must use `express.raw()` (not `express.json()`) because WeChat POSTs XML.
+
+**1. Get your App credentials.** Open [mp.weixin.qq.com](https://mp.weixin.qq.com) → Development → Basic Configuration. Copy **AppID** and **AppSecret**.
+
+**2. Set your token.** On the same page, enter any random string in the **Token** field — this is used for signature verification. Note it as `WECHAT_TOKEN`.
+
+**3. Set environment variables:**
+
+```bash
+WECHAT_APP_ID=wx...
+WECHAT_APP_SECRET=...
+WECHAT_TOKEN=your-random-token
+```
+
+**4. Start your server** with `express.raw()` middleware:
+
+```typescript
+app.use(express.raw({
+  type: '*/*',
+  verify: (req, _r, buf) => ((req as any).rawBody = new Uint8Array(buf)),
+}));
+const handlers = hub.createWebhookHandler();
+app.get('/webhook/:channel', handlers.get);
+app.post('/webhook/:channel', handlers.post);
+```
+
+**5. Set the server URL.** Back in the WeChat dashboard → Development → Basic Configuration → Server Address (URL): `<PUBLIC_URL>/webhook/wechat` → Submit (triggers a GET challenge).
+
+**6. Enable Customer Service API.** Development → API Permissions → ensure `客服消息` (Customer Service Message) is active. Without it, sends will fail.
+
+**7. Test.** Send a message to your Official Account from a WeChat user account.
+
+> **Note:** WeChat access tokens expire every 2 hours. The adapter auto-refreshes them in memory. For multi-process deployments, call `adapter.getAccessToken()` and store the token externally.
 
 ### Discord (15 minutes — slash commands + buttons)
 

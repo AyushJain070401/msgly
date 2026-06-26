@@ -144,17 +144,19 @@ await hub.send({
 });
 ```
 
-| Adapter     | `format: 'markdown'`                    | `format: 'html'`        | fmt helpers                                 |
-| ----------- | --------------------------------------- | ----------------------- | ------------------------------------------- |
-| Telegram    | `parse_mode: MarkdownV2`                | `parse_mode: HTML`      | bold, italic, underline, strike, code, pre, link, spoiler |
-| WhatsApp    | always-on (auto-parsed)                 | —                       | bold, italic, strikethrough, monospace      |
-| Discord     | always-on (auto-parsed)                 | —                       | bold, italic, underline, strike, code, codeBlock, spoiler, link |
-| Teams       | `textFormat: markdown`                  | `textFormat: markdown`  | bold, italic, strikethrough, code, codeBlock, link |
+| Adapter     | `format: 'markdown'`                    | `format: 'html'`          | fmt helpers                                 |
+| ----------- | --------------------------------------- | ------------------------- | ------------------------------------------- |
+| Telegram    | `parse_mode: MarkdownV2`                | `parse_mode: HTML`        | bold, italic, underline, strike, code, pre, link, spoiler |
+| WhatsApp    | always-on (auto-parsed)                 | —                         | bold, italic, strikethrough, monospace      |
+| Discord     | always-on (auto-parsed)                 | —                         | bold, italic, underline, strike, code, codeBlock, spoiler, link |
+| Slack       | mrkdwn section block                    | —                         | bold, italic, strikethrough, code, codeBlock, link |
+| Teams       | `textFormat: markdown`                  | `textFormat: markdown`    | bold, italic, strikethrough, code, codeBlock, link |
 | Gmail       | —                                       | `Content-Type: text/html` | bold, italic, underline, strike, code, pre, link, color, br |
-| Outlook     | —                                       | `contentType: HTML`     | bold, italic, underline, strike, code, pre, link, color, br |
-| Messenger   | plain (not supported)                   | —                       | identity functions                          |
-| Instagram   | plain (not supported)                   | —                       | identity functions                          |
-| LINE        | plain (not supported)                   | —                       | identity functions                          |
+| Outlook     | —                                       | `contentType: HTML`       | bold, italic, underline, strike, code, pre, link, color, br |
+| Messenger   | plain (not supported)                   | —                         | identity functions                          |
+| Instagram   | plain (not supported)                   | —                         | identity functions                          |
+| LINE        | plain (not supported)                   | —                         | identity functions                          |
+| WeChat      | plain (not supported)                   | —                         | identity functions                          |
 
 ### `AccountRef` and `ContactRef`
 
@@ -315,18 +317,18 @@ try {
 
 Cross-channel matrix:
 
-| Feature        | Telegram | WhatsApp | LINE | Messenger | Instagram | Discord | Teams | Gmail | Outlook |
-| -------------- | -------- | -------- | ---- | --------- | --------- | ------- | ----- | ----- | ------- |
-| text           | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | ✓     | ✓       |
-| image          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | —     | —       |
-| video          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | —     | —     | —       |
-| audio          | ✓        | ✓        | ✓    | ✓         | —         | ✓       | —     | —     | —       |
-| file           | ✓        | ✓        | —    | ✓         | —         | ✓       | ✓     | —     | —       |
-| buttons        | ✓        | ✓        | ✓    | ✓         | —         | ✓       | ✓     | —     | —       |
-| quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | —       |
-| templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —       |
-| reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —       |
-| typing         | ✓        | —        | —    | ✓         | ✓         | —       | ✓     | —     | —       |
+| Feature        | Telegram | WhatsApp | LINE | Messenger | Instagram | Discord | Teams | Slack | WeChat | Gmail | Outlook |
+| -------------- | -------- | -------- | ---- | --------- | --------- | ------- | ----- | ----- | ------ | ----- | ------- |
+| text           | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | ✓     | ✓      | ✓     | ✓       |
+| image          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | ✓     | ✓(URL)| ✓      | —     | —       |
+| video          | ✓        | ✓        | ✓    | ✓         | ✓         | ✓       | —     | —     | ✓      | —     | —       |
+| audio          | ✓        | ✓        | ✓    | ✓         | —         | ✓       | —     | —     | ✓      | —     | —       |
+| file           | ✓        | ✓        | —    | ✓         | —         | ✓       | ✓     | —     | —      | —     | —       |
+| buttons        | ✓        | ✓        | ✓    | ✓         | —         | ✓       | ✓     | ✓     | —      | —     | —       |
+| quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | ✓      | —     | —       |
+| templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —      | —     | —       |
+| reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —      | —     | —       |
+| typing         | ✓        | —        | —    | ✓         | ✓         | —       | ✓     | —     | —      | —     | —       |
 
 Email adapters (Gmail, Outlook) are text-only in v1 — inbound attachments come through as best-effort plain-text body extraction, and outbound media is not yet supported.
 

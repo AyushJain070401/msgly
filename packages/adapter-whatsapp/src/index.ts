@@ -21,15 +21,209 @@ export interface WhatsAppConfig {
   appSecret: string;
   /** Verify token for the GET /webhook subscription handshake. */
   verifyToken: string;
+  /**
+   * WhatsApp Business Account ID. Required for template management,
+   * phone number list, WABA info, and webhook subscription operations.
+   */
+  wabaId?: string;
+  /**
+   * Meta / Facebook App ID. Required for profile picture upload
+   * (Resumable Upload API) and token introspection (debugToken).
+   */
+  appId?: string;
   /** Override for tests. */
   apiBase?: string;
   apiVersion?: string;
 }
 
+// ---------- Resource types ----------
+
+export interface WhatsAppBusinessProfile {
+  about?: string;
+  address?: string;
+  description?: string;
+  email?: string;
+  /** Current profile picture CDN URL (read-only from getBusinessProfile). */
+  profilePictureUrl?: string;
+  websites?: string[];
+  /** Industry vertical, e.g. "RETAIL", "TECHNOLOGY". */
+  vertical?: string;
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  /** "APPROVED" | "PENDING" | "REJECTED" | "PAUSED" */
+  status: string;
+  category: string;
+  language: string;
+  components?: unknown[];
+  qualityScore?: { score?: string };
+}
+
+export interface WhatsAppPhoneNumber {
+  id: string;
+  displayPhoneNumber: string;
+  verifiedName: string;
+  qualityRating?: string;
+  /** "APPROVED" | "AVAILABLE_WITHOUT_REVIEW" | "DECLINED" | "PENDING_REVIEW" | "NONE" */
+  nameStatus?: string;
+  /** "VERIFIED" | "EXPIRED" | "NOT_VERIFIED" */
+  codeVerificationStatus?: string;
+}
+
+export interface WhatsAppWabaInfo {
+  id: string;
+  name?: string;
+  currency?: string;
+  messageTemplateNamespace?: string;
+  timezoneId?: string;
+}
+
+export interface WhatsAppTokenInfo {
+  appId?: string;
+  /** "USER" | "PAGE" | "APP" | "SYSTEM_USER" */
+  type?: string;
+  isValid: boolean;
+  /** Unix timestamp when the token expires (0 = no expiry). */
+  expiresAt?: number;
+  scopes?: string[];
+  userId?: string;
+}
+
+// ---------- Adapter interface ----------
+
 export interface WhatsAppAdapter extends Adapter {
   readonly channel: 'whatsapp';
+
   /** Translate a WhatsApp status webhook into DeliveryReceipts. */
   parseStatuses(rawBody: unknown): DeliveryReceipt[];
+
+  // ---- Business profile ----
+
+  /**
+   * Fetch the WhatsApp Business profile for the configured phone number.
+   * Fields: about, address, description, email, profilePictureUrl, websites, vertical.
+   */
+  getBusinessProfile(): Promise<WhatsAppBusinessProfile>;
+
+  /**
+   * Update one or more fields of the WhatsApp Business profile.
+   * Pass only the fields you want to change.
+   */
+  updateBusinessProfile(
+    updates: Partial<Omit<WhatsAppBusinessProfile, 'profilePictureUrl'>>,
+  ): Promise<void>;
+
+  /**
+   * Upload a new profile picture for the WhatsApp Business account.
+   * Internally uses Meta's Resumable Upload API to obtain a handle, then
+   * sets it via the whatsapp_business_profile endpoint.
+   * Requires `config.appId` to be set.
+   */
+  uploadProfilePicture(file: MediaFile): Promise<void>;
+
+  // ---- Display name ----
+
+  /**
+   * Request a display name change. The new name goes through WhatsApp's review
+   * process — the returned `decision` may be "APPROVED", "PENDING", or similar.
+   */
+  requestDisplayName(newName: string): Promise<{ decision: string }>;
+
+  // ---- Two-step verification PIN ----
+
+  /**
+   * Set or update the two-step verification PIN for the registered phone number.
+   * Must be a 6-digit numeric string.
+   */
+  setTwoStepPin(pin: string): Promise<void>;
+
+  // ---- Message templates ----
+
+  /** List templates in the WABA. Requires `config.wabaId`. */
+  listTemplates(options?: {
+    limit?: number;
+    /** Pagination cursor from a previous call's `nextCursor`. */
+    after?: string;
+  }): Promise<{ templates: WhatsAppTemplate[]; nextCursor?: string }>;
+
+  /** Create a new message template. Requires `config.wabaId`. */
+  createTemplate(template: {
+    name: string;
+    category: string;
+    language: string;
+    components: unknown[];
+  }): Promise<{ id: string; status: string }>;
+
+  /** Edit an existing template's components or category. */
+  editTemplate(
+    templateId: string,
+    updates: { components?: unknown[]; category?: string },
+  ): Promise<void>;
+
+  /**
+   * Delete a template by name (removes all language variants).
+   * Pass `templateId` to delete only a specific variant.
+   * Requires `config.wabaId`.
+   */
+  deleteTemplate(templateName: string, templateId?: string): Promise<void>;
+
+  // ---- Phone number registration ----
+
+  /**
+   * Request an OTP to verify phone number ownership.
+   * `codeMethod`: "SMS" or "VOICE". `language`: BCP-47 code, e.g. "en_US".
+   */
+  requestVerificationCode(options: {
+    codeMethod: 'SMS' | 'VOICE';
+    language: string;
+  }): Promise<void>;
+
+  /** Verify the OTP received via SMS/voice. */
+  verifyCode(code: string): Promise<void>;
+
+  /**
+   * Register the verified phone number with WhatsApp Cloud API.
+   * `pin` is the 6-digit two-step verification PIN.
+   */
+  registerPhoneNumber(pin: string): Promise<void>;
+
+  // ---- Phone numbers ----
+
+  /** List all phone numbers in the WABA. Requires `config.wabaId`. */
+  listPhoneNumbers(): Promise<WhatsAppPhoneNumber[]>;
+
+  /**
+   * Get details for a specific phone number.
+   * Defaults to `config.phoneNumberId` if no id is passed.
+   */
+  getPhoneNumberInfo(phoneNumberId?: string): Promise<WhatsAppPhoneNumber>;
+
+  // ---- WABA-level operations ----
+
+  /** Get WABA metadata (id, name, currency, template namespace, timezone). Requires `config.wabaId`. */
+  getWabaInfo(): Promise<WhatsAppWabaInfo>;
+
+  /** Get apps subscribed to this WABA's webhook. Requires `config.wabaId`. */
+  getSubscribedApps(): Promise<Array<{ id: string; name?: string }>>;
+
+  /**
+   * Subscribe the current app to WABA-level webhook events.
+   * Required once per app/WABA pair — after this call, WhatsApp delivers
+   * webhook events to the app's configured callback URL.
+   * Requires `config.wabaId`.
+   */
+  subscribeToWebhook(): Promise<void>;
+
+  // ---- Token introspection ----
+
+  /**
+   * Inspect an access token using Meta's /debug_token endpoint.
+   * Pass `tokenToInspect` to check a specific token; defaults to `config.accessToken`.
+   * Requires `config.appId` and `config.appSecret` (used as the app access token).
+   */
+  debugToken(tokenToInspect?: string): Promise<WhatsAppTokenInfo>;
 }
 
 const GRAPH_API = 'https://graph.facebook.com';
@@ -595,6 +789,328 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     };
   }
 
+  // ---------- helpers ----------
+
+  function requireWabaId(): string {
+    if (!config.wabaId) {
+      throw new Error(
+        'config.wabaId is required for this operation. Add it to WhatsAppConfig: find your WABA ID in Meta Business Manager → WhatsApp → API Setup.',
+      );
+    }
+    return config.wabaId;
+  }
+
+  function requireAppId(): string {
+    if (!config.appId) {
+      throw new Error(
+        'config.appId is required for this operation. Add it to WhatsAppConfig: find the App ID in Meta App Dashboard → General Information.',
+      );
+    }
+    return config.appId;
+  }
+
+  async function graphFetch(
+    path: string,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${config.accessToken}`,
+      ...((init.method === 'POST' || init.method === 'DELETE') && !(init.body instanceof FormData)
+        ? { 'content-type': 'application/json' }
+        : {}),
+      ...(init.headers as Record<string, string> | undefined),
+    };
+    return fetch(`${apiBase()}/${apiVersion()}${path}`, { ...init, headers });
+  }
+
+  async function assertOk(res: Response, context: string): Promise<Record<string, unknown>> {
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status >= 400) {
+      const err = data['error'] as { message?: string; code?: number } | undefined;
+      throw new Error(`${context} failed (${res.status}): ${err?.message ?? JSON.stringify(data)}`);
+    }
+    return data;
+  }
+
+  // ---------- Business profile ----------
+
+  async function getBusinessProfile(): Promise<WhatsAppBusinessProfile> {
+    const res = await graphFetch(
+      `/${config.phoneNumberId}/whatsapp_business_profile?fields=about,address,description,email,profile_picture_url,websites,vertical`,
+    );
+    const data = await assertOk(res, 'getBusinessProfile');
+    const d = (data['data'] as Record<string, unknown>[] | undefined)?.[0] ?? data;
+    return {
+      about: d['about'] as string | undefined,
+      address: d['address'] as string | undefined,
+      description: d['description'] as string | undefined,
+      email: d['email'] as string | undefined,
+      profilePictureUrl: d['profile_picture_url'] as string | undefined,
+      websites: d['websites'] as string[] | undefined,
+      vertical: d['vertical'] as string | undefined,
+    };
+  }
+
+  async function updateBusinessProfile(
+    updates: Partial<Omit<WhatsAppBusinessProfile, 'profilePictureUrl'>>,
+  ): Promise<void> {
+    const body: Record<string, unknown> = { messaging_product: 'whatsapp' };
+    if (updates.about !== undefined) body['about'] = updates.about;
+    if (updates.address !== undefined) body['address'] = updates.address;
+    if (updates.description !== undefined) body['description'] = updates.description;
+    if (updates.email !== undefined) body['email'] = updates.email;
+    if (updates.websites !== undefined) body['websites'] = updates.websites;
+    if (updates.vertical !== undefined) body['vertical'] = updates.vertical;
+
+    const res = await graphFetch(`/${config.phoneNumberId}/whatsapp_business_profile`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    await assertOk(res, 'updateBusinessProfile');
+  }
+
+  async function uploadProfilePicture(file: MediaFile): Promise<void> {
+    const appId = requireAppId();
+
+    const fileBytes =
+      file.data instanceof Uint8Array
+        ? file.data
+        : file.data instanceof Blob
+          ? new Uint8Array(await (file.data as Blob).arrayBuffer())
+          : (() => { throw new Error('uploadProfilePicture: ReadableStream data is not supported. Pass Uint8Array or Blob.'); })();
+
+    // Step 1 — create a resumable upload session
+    const sessionRes = await fetch(
+      `${apiBase()}/${apiVersion()}/${appId}/uploads?file_name=${encodeURIComponent(file.filename ?? 'profile.jpg')}&file_length=${fileBytes.byteLength}&file_type=${encodeURIComponent(file.mimeType)}&access_token=${config.accessToken}`,
+      { method: 'POST' },
+    );
+    const session = await assertOk(sessionRes, 'uploadProfilePicture:createSession');
+    const uploadSessionId = session['id'] as string;
+
+    // Step 2 — upload the bytes
+    const uploadRes = await fetch(`${apiBase()}/${uploadSessionId}`, {
+      method: 'POST',
+      headers: {
+        authorization: `OAuth ${config.accessToken}`,
+        'content-type': 'application/octet-stream',
+        file_offset: '0',
+      },
+      body: fileBytes.buffer as ArrayBuffer,
+    });
+    const uploaded = await assertOk(uploadRes, 'uploadProfilePicture:upload');
+    const handle = uploaded['h'] as string;
+
+    // Step 3 — set the handle as profile picture
+    const profileRes = await graphFetch(`/${config.phoneNumberId}/whatsapp_business_profile`, {
+      method: 'POST',
+      body: JSON.stringify({ messaging_product: 'whatsapp', profile_picture_handle: handle }),
+    });
+    await assertOk(profileRes, 'uploadProfilePicture:setHandle');
+  }
+
+  // ---------- Display name ----------
+
+  async function requestDisplayName(newName: string): Promise<{ decision: string }> {
+    const res = await graphFetch(`/${config.phoneNumberId}/request_display_name`, {
+      method: 'POST',
+      body: JSON.stringify({ new_display_name: newName }),
+    });
+    const data = await assertOk(res, 'requestDisplayName');
+    return { decision: (data['decision'] as string | undefined) ?? 'PENDING' };
+  }
+
+  // ---------- Two-step PIN ----------
+
+  async function setTwoStepPin(pin: string): Promise<void> {
+    const res = await graphFetch(`/${config.phoneNumberId}`, {
+      method: 'POST',
+      body: JSON.stringify({ pin }),
+    });
+    await assertOk(res, 'setTwoStepPin');
+  }
+
+  // ---------- Templates ----------
+
+  async function listTemplates(options: { limit?: number; after?: string } = {}): Promise<{
+    templates: WhatsAppTemplate[];
+    nextCursor?: string;
+  }> {
+    const wabaId = requireWabaId();
+    const params = new URLSearchParams({ fields: 'id,name,status,category,language,components,quality_score' });
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.after) params.set('after', options.after);
+
+    const res = await graphFetch(`/${wabaId}/message_templates?${params.toString()}`);
+    const data = await assertOk(res, 'listTemplates');
+    const raw = (data['data'] as Record<string, unknown>[]) ?? [];
+
+    const templates: WhatsAppTemplate[] = raw.map((t) => ({
+      id: String(t['id'] ?? ''),
+      name: String(t['name'] ?? ''),
+      status: String(t['status'] ?? ''),
+      category: String(t['category'] ?? ''),
+      language: String(t['language'] ?? ''),
+      components: t['components'] as unknown[] | undefined,
+      qualityScore: t['quality_score'] as { score?: string } | undefined,
+    }));
+
+    const paging = data['paging'] as { cursors?: { after?: string } } | undefined;
+    return { templates, nextCursor: paging?.cursors?.after };
+  }
+
+  async function createTemplate(template: {
+    name: string;
+    category: string;
+    language: string;
+    components: unknown[];
+  }): Promise<{ id: string; status: string }> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(`/${wabaId}/message_templates`, {
+      method: 'POST',
+      body: JSON.stringify(template),
+    });
+    const data = await assertOk(res, 'createTemplate');
+    return { id: String(data['id'] ?? ''), status: String(data['status'] ?? '') };
+  }
+
+  async function editTemplate(
+    templateId: string,
+    updates: { components?: unknown[]; category?: string },
+  ): Promise<void> {
+    const res = await graphFetch(`/${templateId}`, {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    });
+    await assertOk(res, 'editTemplate');
+  }
+
+  async function deleteTemplate(templateName: string, templateId?: string): Promise<void> {
+    const wabaId = requireWabaId();
+    const params = new URLSearchParams({ name: templateName });
+    if (templateId) params.set('hsm_id', templateId);
+    const res = await graphFetch(`/${wabaId}/message_templates?${params.toString()}`, {
+      method: 'DELETE',
+    });
+    await assertOk(res, 'deleteTemplate');
+  }
+
+  // ---------- Phone number registration ----------
+
+  async function requestVerificationCode(options: {
+    codeMethod: 'SMS' | 'VOICE';
+    language: string;
+  }): Promise<void> {
+    const res = await graphFetch(`/${config.phoneNumberId}/request_code`, {
+      method: 'POST',
+      body: JSON.stringify({ code_method: options.codeMethod, language: options.language }),
+    });
+    await assertOk(res, 'requestVerificationCode');
+  }
+
+  async function verifyCode(code: string): Promise<void> {
+    const res = await graphFetch(`/${config.phoneNumberId}/verify_code`, {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    await assertOk(res, 'verifyCode');
+  }
+
+  async function registerPhoneNumber(pin: string): Promise<void> {
+    const res = await graphFetch(`/${config.phoneNumberId}/register`, {
+      method: 'POST',
+      body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
+    });
+    await assertOk(res, 'registerPhoneNumber');
+  }
+
+  // ---------- Phone numbers ----------
+
+  async function listPhoneNumbers(): Promise<WhatsAppPhoneNumber[]> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(
+      `/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,name_status,code_verification_status`,
+    );
+    const data = await assertOk(res, 'listPhoneNumbers');
+    const raw = (data['data'] as Record<string, unknown>[]) ?? [];
+    return raw.map((n) => ({
+      id: String(n['id'] ?? ''),
+      displayPhoneNumber: String(n['display_phone_number'] ?? ''),
+      verifiedName: String(n['verified_name'] ?? ''),
+      qualityRating: n['quality_rating'] as string | undefined,
+      nameStatus: n['name_status'] as string | undefined,
+      codeVerificationStatus: n['code_verification_status'] as string | undefined,
+    }));
+  }
+
+  async function getPhoneNumberInfo(
+    phoneNumberId = config.phoneNumberId,
+  ): Promise<WhatsAppPhoneNumber> {
+    const res = await graphFetch(
+      `/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,name_status,code_verification_status`,
+    );
+    const data = await assertOk(res, 'getPhoneNumberInfo');
+    return {
+      id: String(data['id'] ?? ''),
+      displayPhoneNumber: String(data['display_phone_number'] ?? ''),
+      verifiedName: String(data['verified_name'] ?? ''),
+      qualityRating: data['quality_rating'] as string | undefined,
+      nameStatus: data['name_status'] as string | undefined,
+      codeVerificationStatus: data['code_verification_status'] as string | undefined,
+    };
+  }
+
+  // ---------- WABA ----------
+
+  async function getWabaInfo(): Promise<WhatsAppWabaInfo> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(
+      `/${wabaId}?fields=id,name,currency,message_template_namespace,timezone_id`,
+    );
+    const data = await assertOk(res, 'getWabaInfo');
+    return {
+      id: String(data['id'] ?? wabaId),
+      name: data['name'] as string | undefined,
+      currency: data['currency'] as string | undefined,
+      messageTemplateNamespace: data['message_template_namespace'] as string | undefined,
+      timezoneId: data['timezone_id'] as string | undefined,
+    };
+  }
+
+  async function getSubscribedApps(): Promise<Array<{ id: string; name?: string }>> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(`/${wabaId}/subscribed_apps`);
+    const data = await assertOk(res, 'getSubscribedApps');
+    const raw = (data['data'] as Record<string, unknown>[]) ?? [];
+    return raw.map((a) => ({ id: String(a['id'] ?? ''), name: a['name'] as string | undefined }));
+  }
+
+  async function subscribeToWebhook(): Promise<void> {
+    const wabaId = requireWabaId();
+    const res = await graphFetch(`/${wabaId}/subscribed_apps`, { method: 'POST' });
+    await assertOk(res, 'subscribeToWebhook');
+  }
+
+  // ---------- Token introspection ----------
+
+  async function debugToken(tokenToInspect?: string): Promise<WhatsAppTokenInfo> {
+    const appId = requireAppId();
+    const input = tokenToInspect ?? config.accessToken;
+    const appToken = `${appId}|${config.appSecret}`;
+    const res = await fetch(
+      `${apiBase()}/${apiVersion()}/debug_token?input_token=${encodeURIComponent(input)}&access_token=${encodeURIComponent(appToken)}`,
+    );
+    const data = await assertOk(res, 'debugToken');
+    const d = (data['data'] as Record<string, unknown>) ?? data;
+    return {
+      appId: d['app_id'] as string | undefined,
+      type: d['type'] as string | undefined,
+      isValid: Boolean(d['is_valid']),
+      expiresAt: d['expires_at'] as number | undefined,
+      scopes: d['scopes'] as string[] | undefined,
+      userId: d['user_id'] as string | undefined,
+    };
+  }
+
   return {
     channel: 'whatsapp',
     capabilities: CAPABILITIES,
@@ -606,6 +1122,24 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     downloadMedia,
     verifyCredentials,
     parseStatuses,
+    getBusinessProfile,
+    updateBusinessProfile,
+    uploadProfilePicture,
+    requestDisplayName,
+    setTwoStepPin,
+    listTemplates,
+    createTemplate,
+    editTemplate,
+    deleteTemplate,
+    requestVerificationCode,
+    verifyCode,
+    registerPhoneNumber,
+    listPhoneNumbers,
+    getPhoneNumberInfo,
+    getWabaInfo,
+    getSubscribedApps,
+    subscribeToWebhook,
+    debugToken,
   };
 }
 

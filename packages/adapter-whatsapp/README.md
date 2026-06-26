@@ -57,6 +57,10 @@ interface WhatsAppConfig {
   accessToken: string;    // temporary (24h) or System User token
   appSecret: string;      // from App Settings → Basic
   verifyToken: string;    // your chosen string for webhook handshake
+  /** WABA ID — required for template management, phone number list, and webhook subscription. */
+  wabaId?: string;
+  /** App ID — required for profile picture upload and token introspection. */
+  appId?: string;
   apiBase?: string;       // defaults to https://graph.facebook.com
   apiVersion?: string;    // defaults to v20.0
 }
@@ -173,6 +177,146 @@ await hub.send({
 ```
 
 User taps a button → you receive a text message whose `content.text` equals the button's `id`.
+
+## Business profile
+
+```typescript
+import type { WhatsAppAdapter } from '@msgly/whatsapp';
+const adapter = hub.getAdapter('whatsapp') as WhatsAppAdapter;
+
+// Read current profile
+const profile = await adapter.getBusinessProfile();
+// { about, address, description, email, profilePictureUrl, websites, vertical }
+
+// Update fields (pass only what you want to change)
+await adapter.updateBusinessProfile({
+  about: 'Fast shipping • Easy returns',
+  email: 'support@example.com',
+  websites: ['https://example.com'],
+  vertical: 'RETAIL',
+});
+
+// Upload a new profile picture (requires config.appId)
+import { readFileSync } from 'fs';
+await adapter.uploadProfilePicture({
+  data: readFileSync('./logo.jpg'),
+  mimeType: 'image/jpeg',
+  filename: 'logo.jpg',
+});
+```
+
+## Display name
+
+```typescript
+// Request a display name change (goes through WhatsApp review)
+const result = await adapter.requestDisplayName('Acme Support');
+// result.decision → "APPROVED" | "PENDING" | "DECLINED"
+```
+
+## Two-step verification PIN
+
+```typescript
+// Set or rotate the 6-digit PIN for the registered phone number
+await adapter.setTwoStepPin('123456');
+```
+
+## Message templates
+
+Requires `config.wabaId`.
+
+```typescript
+// List all templates (paginated)
+const { templates, nextCursor } = await adapter.listTemplates({ limit: 20 });
+// templates[0] → { id, name, status, category, language, components }
+
+// Paginate
+const page2 = await adapter.listTemplates({ limit: 20, after: nextCursor });
+
+// Create a new template
+const { id, status } = await adapter.createTemplate({
+  name: 'order_shipped',
+  category: 'UTILITY',
+  language: 'en_US',
+  components: [
+    {
+      type: 'BODY',
+      text: 'Your order {{1}} has shipped! Track it at {{2}}.',
+    },
+  ],
+});
+
+// Edit an existing template's components
+await adapter.editTemplate(id, {
+  components: [{ type: 'BODY', text: 'Updated text {{1}}.' }],
+});
+
+// Delete (all language variants)
+await adapter.deleteTemplate('order_shipped');
+
+// Delete a specific language variant
+await adapter.deleteTemplate('order_shipped', templateId);
+```
+
+## Phone number management
+
+Requires `config.wabaId` for listing.
+
+```typescript
+// List all phone numbers in the WABA
+const numbers = await adapter.listPhoneNumbers();
+// [{ id, displayPhoneNumber, verifiedName, qualityRating, nameStatus }]
+
+// Get info for the configured phone number (or pass a specific id)
+const info = await adapter.getPhoneNumberInfo();
+```
+
+## Phone number registration flow
+
+Use this when provisioning a new number for the first time:
+
+```typescript
+// 1. Request OTP
+await adapter.requestVerificationCode({ codeMethod: 'SMS', language: 'en_US' });
+
+// 2. Verify OTP (received by SMS)
+await adapter.verifyCode('123456');
+
+// 3. Register with a two-step PIN
+await adapter.registerPhoneNumber('123456');
+```
+
+## WABA operations
+
+Requires `config.wabaId`.
+
+```typescript
+// Get WABA metadata
+const waba = await adapter.getWabaInfo();
+// { id, name, currency, messageTemplateNamespace, timezoneId }
+
+// Check which apps are subscribed to webhook events
+const apps = await adapter.getSubscribedApps();
+
+// Subscribe this app to WABA-level events (run once during deployment)
+await adapter.subscribeToWebhook();
+```
+
+## Token introspection
+
+Requires `config.appId` and `config.appSecret`.
+
+```typescript
+// Inspect the current access token
+const info = await adapter.debugToken();
+// { isValid, type, appId, expiresAt, scopes, userId }
+
+// Inspect a different token
+const info2 = await adapter.debugToken(someOtherToken);
+
+if (!info.isValid) {
+  console.error('Token is expired or invalid — rotate it');
+}
+```
 
 ## Delivery receipts
 

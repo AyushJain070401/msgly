@@ -1,6 +1,6 @@
 {
   "name": "@msgly/messenger",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Facebook Messenger adapter for Msgly",
   "license": "MIT",
   "type": "module",

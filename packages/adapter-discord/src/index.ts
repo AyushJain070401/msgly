@@ -119,21 +119,25 @@ function toDiscordPayload(content: MessageContent): Record<string, unknown> {
         content: `${name}https://maps.google.com/?q=${content.latitude},${content.longitude}`,
       };
     }
-    case 'interactive':
+    case 'interactive': {
+      // Discord supports up to 5 ActionRows, each with up to 5 buttons.
+      // Map 2D button array directly to rows; flatten 1D into a single row.
+      const rows: Array<typeof content.buttons[0]>[] = Array.isArray(content.buttons[0])
+        ? (content.buttons as import('@msgly/core').InteractiveButton[][])
+        : [content.buttons as import('@msgly/core').InteractiveButton[]];
       return {
         content: content.text,
-        components: [
-          {
-            type: 1, // ACTION_ROW
-            components: content.buttons.slice(0, 5).map((b) => ({
-              type: 2, // BUTTON
-              style: 1, // PRIMARY
-              label: b.label.slice(0, 80),
-              custom_id: b.id.slice(0, 100),
-            })),
-          },
-        ],
+        components: rows.slice(0, 5).map((row) => ({
+          type: 1, // ACTION_ROW
+          components: (row as import('@msgly/core').InteractiveButton[]).slice(0, 5).map((b) => ({
+            type: 2, // BUTTON
+            style: 1, // PRIMARY
+            label: b.label.slice(0, 80),
+            custom_id: b.id.slice(0, 100),
+          })),
+        })),
       };
+    }
     case 'template':
       throw new Error('Discord does not support templates');
     default:
@@ -276,15 +280,19 @@ export function createDiscordAdapter(config: DiscordConfig): DiscordAdapter {
     if (interaction.type === INTERACTION_PING) return [];
 
     let text: string | null = null;
+    let interactionData: string | undefined;
     if (interaction.type === INTERACTION_APPLICATION_COMMAND && interaction.data) {
       text = commandToText(interaction.data as DiscordCommandData);
     } else if (interaction.type === INTERACTION_MESSAGE_COMPONENT && interaction.data) {
-      text = (interaction.data as DiscordComponentData).custom_id;
+      const componentData = interaction.data as DiscordComponentData;
+      text = componentData.custom_id;
+      interactionData = componentData.custom_id;
     }
 
     if (text === null) return [];
 
     const user = interaction.member?.user ?? interaction.user;
+    const isComponent = interaction.type === INTERACTION_MESSAGE_COMPONENT;
 
     return [
       {
@@ -304,6 +312,9 @@ export function createDiscordAdapter(config: DiscordConfig): DiscordAdapter {
         content: { type: 'text', text },
         timestamp: new Date().toISOString(),
         raw: interaction,
+        ...(isComponent
+          ? { interaction: { id: interaction.id, data: interactionData } }
+          : {}),
         metadata: {
           interactionToken: interaction.token,
           interactionId: interaction.id,

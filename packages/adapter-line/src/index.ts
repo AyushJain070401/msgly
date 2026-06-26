@@ -116,12 +116,16 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
           latitude: content.latitude,
           longitude: content.longitude,
         };
-      case 'interactive':
+      case 'interactive': {
+        // LINE quickReply is 1D (max 13). Flatten 2D if provided.
+        const flat = Array.isArray(content.buttons[0])
+          ? (content.buttons as import('@msgly/core').InteractiveButton[][]).flat()
+          : (content.buttons as import('@msgly/core').InteractiveButton[]);
         return {
           type: 'text',
           text: content.text,
           quickReply: {
-            items: content.buttons.slice(0, 13).map((b) => ({
+            items: flat.slice(0, 13).map((b) => ({
               type: 'action',
               action: {
                 type: 'postback',
@@ -131,6 +135,7 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
             })),
           },
         };
+      }
       default:
         throw new Error(`Unsupported content type for LINE: ${(content as { type: string }).type}`);
     }
@@ -204,6 +209,29 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
 
     const messages: InboundMessage[] = [];
     for (const event of body.events) {
+      // Postback — user tapped a quickReply button
+      if (event.type === 'postback' && event.postback) {
+        messages.push({
+          id: randomId(),
+          channel: 'line',
+          direction: 'inbound',
+          account: {
+            channel: 'line',
+            channelAccountId: event.source.userId ?? 'self',
+          },
+          contact: {
+            channel: 'line',
+            channelUserId: event.source.userId ?? 'unknown',
+          },
+          content: { type: 'text', text: event.postback.data },
+          timestamp: new Date(event.timestamp).toISOString(),
+          raw: event,
+          interaction: { id: event.postback.data, data: event.postback.data },
+          metadata: event.replyToken ? { replyToken: event.replyToken } : undefined,
+        });
+        continue;
+      }
+
       if (event.type !== 'message' || !event.message) continue;
       const content = parseContent(event.message);
       if (!content) continue;
@@ -341,6 +369,7 @@ interface LineEvent {
   replyToken?: string;
   source: { type: string; userId?: string };
   message?: LineMessage;
+  postback?: { data: string; displayText?: string };
 }
 
 interface LineMessage {

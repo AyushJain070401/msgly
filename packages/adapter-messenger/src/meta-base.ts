@@ -1,7 +1,9 @@
 import type {
+  ContactRef,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
+  InteractiveButton,
   MediaFile,
   MediaReference,
   MessageContent,
@@ -31,6 +33,7 @@ export interface MetaGraphBase {
   verifyCredentials(): Promise<CredentialsCheckResult>;
   uploadMedia(file: MediaFile): Promise<MediaReference>;
   downloadMedia(ref: MediaReference): Promise<MediaFile>;
+  sendTyping(contact: ContactRef): Promise<void>;
 }
 
 export type MetaChannel = 'messenger' | 'instagram';
@@ -84,15 +87,20 @@ function defaultToMetaMessage(
           payload: { url: content.mediaRef.value, is_reusable: true },
         },
       };
-    case 'interactive':
+    case 'interactive': {
+      // Meta quick_replies are 1D. Flatten 2D if provided.
+      const flat: InteractiveButton[] = Array.isArray(content.buttons[0])
+        ? (content.buttons as InteractiveButton[][]).flat()
+        : (content.buttons as InteractiveButton[]);
       return {
         text: content.text,
-        quick_replies: content.buttons.slice(0, 13).map((b) => ({
+        quick_replies: flat.slice(0, 13).map((b) => ({
           content_type: 'text',
           title: b.label.slice(0, 20),
           payload: b.id.slice(0, 1000),
         })),
       };
+    }
     default:
       throw new Error(`Unsupported content type for ${channel}: ${(content as { type: string }).type}`);
   }
@@ -190,9 +198,28 @@ export function createMetaGraphBase(
     for (const entry of body.entry) {
       const events = entry.messaging ?? [];
       for (const event of events) {
+        // Postback (user tapped a quick reply or persistent button)
+        if (event.postback) {
+          messages.push({
+            id: randomId(),
+            channel,
+            direction: 'inbound',
+            account: { channel, channelAccountId: event.recipient.id },
+            contact: { channel, channelUserId: event.sender.id },
+            content: { type: 'text', text: event.postback.title },
+            timestamp: new Date(event.timestamp).toISOString(),
+            raw: event,
+            interaction: { id: event.postback.payload, data: event.postback.payload },
+          });
+          continue;
+        }
+
         if (!event.message || event.message.is_echo) continue;
         const content = parseInboundContent(event.message);
         if (!content) continue;
+
+        // Quick reply tapped — the message carries a quick_reply.payload
+        const qrPayload = event.message.quick_reply?.payload;
 
         messages.push({
           id: randomId(),
@@ -204,10 +231,27 @@ export function createMetaGraphBase(
           content,
           timestamp: new Date(event.timestamp).toISOString(),
           raw: event,
+          ...(qrPayload
+            ? { interaction: { id: qrPayload, data: qrPayload } }
+            : {}),
         });
       }
     }
     return messages;
+  }
+
+  async function sendTyping(contact: ContactRef): Promise<void> {
+    await fetch(
+      `${sendUrl()}?access_token=${encodeURIComponent(config.pageAccessToken)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          recipient: { id: contact.channelUserId },
+          sender_action: 'typing_on',
+        }),
+      },
+    );
   }
 
   async function verifySignature(req: WebhookRequest): Promise<boolean> {
@@ -327,6 +371,7 @@ export function createMetaGraphBase(
     verifyCredentials,
     uploadMedia,
     downloadMedia,
+    sendTyping,
   };
 }
 
@@ -349,12 +394,14 @@ export interface MetaMessagingEvent {
   recipient: { id: string };
   timestamp: number;
   message?: MetaInboundMessage;
+  postback?: { title: string; payload: string };
 }
 
 export interface MetaInboundMessage {
   mid: string;
   text?: string;
   is_echo?: boolean;
+  quick_reply?: { payload: string };
   attachments?: Array<{
     type: string;
     payload?: {

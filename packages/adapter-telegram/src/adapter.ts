@@ -1,9 +1,11 @@
 import type {
   Adapter,
   AdapterCapabilities,
+  ContactRef,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
+  InteractiveButton,
   MediaFile,
   MediaReference,
   OutboundMessage,
@@ -19,14 +21,57 @@ export interface TelegramConfig {
   apiBase?: string;
 }
 
+export interface TelegramSetWebhookOptions {
+  /** Restrict which update types are delivered. Defaults to all. */
+  allowedUpdates?: string[];
+}
+
+export interface TelegramBotInfo {
+  id: number;
+  username: string;
+  firstName: string;
+  canJoinGroups: boolean;
+  canReadAllGroupMessages: boolean;
+}
+
+export interface TelegramWebhookInfo {
+  url: string;
+  hasCustomCertificate: boolean;
+  pendingUpdateCount: number;
+  lastErrorDate?: number;
+  lastErrorMessage?: string;
+  allowedUpdates?: string[];
+}
+
 /** Telegram adapter with channel-specific helpers in addition to the core contract. */
 export interface TelegramAdapter extends Adapter {
   readonly channel: 'telegram';
   /** Register a public webhook URL with Telegram. Call at deploy time. */
-  setWebhook(url: string): Promise<void>;
+  setWebhook(url: string, options?: TelegramSetWebhookOptions): Promise<void>;
   /** Remove the registered webhook (useful for local development). */
   deleteWebhook(): Promise<void>;
+  /** Dismiss the loading spinner on an inline button. Must be called within 10 s. */
+  answerCallbackQuery(callbackId: string, options?: { text?: string; showAlert?: boolean }): Promise<void>;
+  /** Send a chat action (typing, upload_photo, etc.). */
+  sendChatAction(chatId: string, action: TelegramChatAction): Promise<void>;
+  /** Fetch current webhook status — useful for operator dashboards. */
+  getWebhookInfo(): Promise<TelegramWebhookInfo>;
+  /** Fetch structured bot identity — id, username, first_name. */
+  getBotInfo(): Promise<TelegramBotInfo>;
 }
+
+export type TelegramChatAction =
+  | 'typing'
+  | 'upload_photo'
+  | 'record_video'
+  | 'upload_video'
+  | 'record_voice'
+  | 'upload_voice'
+  | 'upload_document'
+  | 'choose_sticker'
+  | 'find_location'
+  | 'record_video_note'
+  | 'upload_video_note';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
@@ -44,6 +89,13 @@ function randomId(): string {
     return globalThis.crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Normalize 1D or 2D button array into rows. */
+function toRows(buttons: InteractiveButton[] | InteractiveButton[][]): InteractiveButton[][] {
+  if (buttons.length === 0) return [];
+  if (Array.isArray(buttons[0])) return buttons as InteractiveButton[][];
+  return [buttons as InteractiveButton[]];
 }
 
 export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
@@ -105,16 +157,30 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
         break;
       case 'interactive': {
         method = 'sendMessage';
-        const buttons = message.content.buttons;
-        payload = {
-          chat_id: chatId,
-          text: message.content.text,
-          reply_markup: {
-            inline_keyboard: [
-              buttons.map((b) => ({ text: b.label, callback_data: b.id })),
-            ],
-          },
-        };
+        const rows = toRows(message.content.buttons);
+        const keyboardType = message.content.keyboardType ?? 'inline';
+
+        if (keyboardType === 'reply') {
+          payload = {
+            chat_id: chatId,
+            text: message.content.text,
+            reply_markup: {
+              keyboard: rows.map((row) => row.map((b) => ({ text: b.label }))),
+              one_time_keyboard: true,
+              resize_keyboard: true,
+            },
+          };
+        } else {
+          payload = {
+            chat_id: chatId,
+            text: message.content.text,
+            reply_markup: {
+              inline_keyboard: rows.map((row) =>
+                row.map((b) => ({ text: b.label, callback_data: b.id })),
+              ),
+            },
+          };
+        }
         break;
       }
       default:
@@ -164,6 +230,25 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
         caption: m.caption,
       };
     }
+    if (m.video) {
+      return {
+        type: 'video',
+        mediaRef: { kind: 'platform-id', value: m.video.file_id, mimeType: m.video.mime_type },
+        caption: m.caption,
+      };
+    }
+    if (m.audio) {
+      return {
+        type: 'audio',
+        mediaRef: { kind: 'platform-id', value: m.audio.file_id, mimeType: m.audio.mime_type },
+      };
+    }
+    if (m.voice) {
+      return {
+        type: 'audio',
+        mediaRef: { kind: 'platform-id', value: m.voice.file_id, mimeType: 'audio/ogg' },
+      };
+    }
     if (m.document) {
       return {
         type: 'file',
@@ -185,35 +270,74 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     return null;
   }
 
+  function messageFromTelegramMessage(
+    m: TelegramMessage,
+    update: TelegramUpdate,
+    extra?: Partial<InboundMessage>,
+  ): InboundMessage | null {
+    const content = parseContent(m);
+    if (!content) return null;
+    return {
+      id: randomId(),
+      externalId: m.message_id.toString(),
+      channel: 'telegram',
+      direction: 'inbound',
+      account: { channel: 'telegram', channelAccountId: 'self' },
+      contact: {
+        channel: 'telegram',
+        channelUserId: m.chat.id.toString(),
+        displayName: m.from?.first_name ?? m.chat.first_name ?? m.chat.title,
+      },
+      content,
+      timestamp: new Date(m.date * 1000).toISOString(),
+      raw: update,
+      ...extra,
+    };
+  }
+
   async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
     const update = req.body as TelegramUpdate;
-    if (!update.message) return [];
 
-    const m = update.message;
-    const content = parseContent(m);
-    if (!content) return [];
+    // Normal message
+    if (update.message) {
+      const msg = messageFromTelegramMessage(update.message, update);
+      return msg ? [msg] : [];
+    }
 
-    return [
-      {
-        id: randomId(),
-        externalId: m.message_id.toString(),
-        channel: 'telegram',
-        direction: 'inbound',
-        account: { channel: 'telegram', channelAccountId: 'self' },
-        contact: {
+    // Edited message — same shape, mark with edited flag
+    if (update.edited_message) {
+      const msg = messageFromTelegramMessage(update.edited_message, update, { edited: true });
+      return msg ? [msg] : [];
+    }
+
+    // Inline button tap — synthesize a text message carrying the interaction
+    if (update.callback_query) {
+      const cq = update.callback_query;
+      return [
+        {
+          id: randomId(),
+          externalId: cq.id,
           channel: 'telegram',
-          channelUserId: m.chat.id.toString(),
-          displayName: m.from?.first_name ?? m.chat.first_name ?? m.chat.title,
+          direction: 'inbound',
+          account: { channel: 'telegram', channelAccountId: 'self' },
+          contact: {
+            channel: 'telegram',
+            channelUserId: cq.from.id.toString(),
+            displayName: cq.from.first_name,
+          },
+          content: { type: 'text', text: cq.data ?? '' },
+          timestamp: new Date().toISOString(),
+          raw: update,
+          interaction: { id: cq.id, data: cq.data },
         },
-        content,
-        timestamp: new Date(m.date * 1000).toISOString(),
-        raw: update,
-      },
-    ];
+      ];
+    }
+
+    return [];
   }
 
   async function verifySignature(req: WebhookRequest): Promise<boolean> {
-    if (!config.webhookSecret) return true; // not configured
+    if (!config.webhookSecret) return true;
     const header = req.headers['x-telegram-bot-api-secret-token'];
     return header === config.webhookSecret;
   }
@@ -258,7 +382,7 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
 
       const data = (await res.json().catch(() => null)) as {
         ok: boolean;
-        result?: { username: string; first_name: string };
+        result?: { id: number; username: string; first_name: string };
         description?: string;
       } | null;
 
@@ -266,14 +390,14 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
         return {
           ok: false,
           reason: 'unknown',
-          hint: `Telegram getMe returned a non-JSON response (status ${res.status}). Are you behind a proxy that's blocking api.telegram.org?`,
+          hint: `Telegram getMe returned a non-JSON response (status ${res.status}).`,
         };
       }
       if ((data.description ?? '').includes('Unauthorized')) {
         return {
           ok: false,
           reason: 'unauthorized',
-          hint: 'Telegram rejected the bot token. Re-check TELEGRAM_BOT_TOKEN against @BotFather (token format: 123456:ABC-DEF...).',
+          hint: 'Telegram rejected the bot token. Re-check TELEGRAM_BOT_TOKEN against @BotFather.',
         };
       }
       if (!data.ok || !data.result) {
@@ -283,7 +407,10 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
           hint: `Telegram getMe returned: ${data.description ?? 'no result'}`,
         };
       }
-      return { ok: true, accountInfo: `@${data.result.username}` };
+      return {
+        ok: true,
+        accountInfo: `${data.result.first_name} (@${data.result.username}, id:${data.result.id})`,
+      };
     } catch (err) {
       return {
         ok: false,
@@ -295,9 +422,10 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     }
   }
 
-  async function setWebhook(url: string): Promise<void> {
+  async function setWebhook(url: string, options?: TelegramSetWebhookOptions): Promise<void> {
     const payload: Record<string, unknown> = { url };
     if (config.webhookSecret) payload['secret_token'] = config.webhookSecret;
+    if (options?.allowedUpdates) payload['allowed_updates'] = options.allowedUpdates;
     const res = await fetch(apiUrl('setWebhook'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -313,6 +441,83 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     await fetch(apiUrl('deleteWebhook'), { method: 'POST' });
   }
 
+  async function answerCallbackQuery(
+    callbackId: string,
+    options?: { text?: string; showAlert?: boolean },
+  ): Promise<void> {
+    await fetch(apiUrl('answerCallbackQuery'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: callbackId,
+        ...(options?.text ? { text: options.text } : {}),
+        ...(options?.showAlert ? { show_alert: true } : {}),
+      }),
+    });
+  }
+
+  async function sendChatAction(chatId: string, action: TelegramChatAction): Promise<void> {
+    await fetch(apiUrl('sendChatAction'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action }),
+    });
+  }
+
+  async function sendTyping(contact: ContactRef): Promise<void> {
+    await sendChatAction(contact.channelUserId, 'typing');
+  }
+
+  async function getWebhookInfo(): Promise<TelegramWebhookInfo> {
+    const res = await fetch(apiUrl('getWebhookInfo'));
+    const data = (await res.json()) as {
+      ok: boolean;
+      result?: {
+        url: string;
+        has_custom_certificate: boolean;
+        pending_update_count: number;
+        last_error_date?: number;
+        last_error_message?: string;
+        allowed_updates?: string[];
+      };
+    };
+    if (!data.ok || !data.result) {
+      throw new Error('Telegram getWebhookInfo failed');
+    }
+    return {
+      url: data.result.url,
+      hasCustomCertificate: data.result.has_custom_certificate,
+      pendingUpdateCount: data.result.pending_update_count,
+      lastErrorDate: data.result.last_error_date,
+      lastErrorMessage: data.result.last_error_message,
+      allowedUpdates: data.result.allowed_updates,
+    };
+  }
+
+  async function getBotInfo(): Promise<TelegramBotInfo> {
+    const res = await fetch(apiUrl('getMe'));
+    const data = (await res.json()) as {
+      ok: boolean;
+      result?: {
+        id: number;
+        username: string;
+        first_name: string;
+        can_join_groups: boolean;
+        can_read_all_group_messages: boolean;
+      };
+    };
+    if (!data.ok || !data.result) {
+      throw new Error('Telegram getMe failed');
+    }
+    return {
+      id: data.result.id,
+      username: data.result.username,
+      firstName: data.result.first_name,
+      canJoinGroups: data.result.can_join_groups,
+      canReadAllGroupMessages: data.result.can_read_all_group_messages,
+    };
+  }
+
   return {
     channel: 'telegram',
     capabilities: CAPABILITIES,
@@ -324,14 +529,21 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     verifyCredentials,
     setWebhook,
     deleteWebhook,
+    answerCallbackQuery,
+    sendChatAction,
+    sendTyping,
+    getWebhookInfo,
+    getBotInfo,
   };
 }
 
-// ---------- Telegram payload shapes (subset) ----------
+// ---------- Telegram payload shapes ----------
 
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  edited_message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 }
 
 interface TelegramMessage {
@@ -342,6 +554,16 @@ interface TelegramMessage {
   text?: string;
   caption?: string;
   photo?: Array<{ file_id: string }>;
+  video?: { file_id: string; mime_type?: string };
+  audio?: { file_id: string; mime_type?: string };
+  voice?: { file_id: string };
   document?: { file_id: string; mime_type?: string };
   location?: { latitude: number; longitude: number };
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: { id: number; first_name?: string };
+  message?: TelegramMessage;
+  data?: string;
 }

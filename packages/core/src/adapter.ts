@@ -1,5 +1,6 @@
 import type {
   ChannelName,
+  ContactRef,
   DeliveryReceipt,
   InboundMessage,
   MediaFile,
@@ -117,6 +118,12 @@ export interface Adapter {
   getInteractionAck?(
     req: WebhookRequest,
   ): string | { body: string; contentType?: string } | null;
+
+  /**
+   * Send a typing indicator to the contact. Optional — only implement when the
+   * platform supports it. Callers should guard: `await adapter.sendTyping?.(contact)`.
+   */
+  sendTyping?(contact: ContactRef): Promise<void>;
 
   /** Optional lifecycle hook — e.g. start long polling, register webhooks. */
   start?(): Promise<void>;

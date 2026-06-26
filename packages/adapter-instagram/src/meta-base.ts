@@ -84,15 +84,19 @@ function defaultToMetaMessage(
           payload: { url: content.mediaRef.value, is_reusable: true },
         },
       };
-    case 'interactive':
+    case 'interactive': {
+      const flat: import('@msgly/core').InteractiveButton[] = Array.isArray(content.buttons[0])
+        ? (content.buttons as import('@msgly/core').InteractiveButton[][]).flat()
+        : (content.buttons as import('@msgly/core').InteractiveButton[]);
       return {
         text: content.text,
-        quick_replies: content.buttons.slice(0, 13).map((b) => ({
+        quick_replies: flat.slice(0, 13).map((b) => ({
           content_type: 'text',
           title: b.label.slice(0, 20),
           payload: b.id.slice(0, 1000),
         })),
       };
+    }
     default:
       throw new Error(`Unsupported content type for ${channel}: ${(content as { type: string }).type}`);
   }

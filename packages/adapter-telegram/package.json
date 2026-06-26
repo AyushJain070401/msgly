@@ -1,6 +1,6 @@
 {
   "name": "@msgly/telegram",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Telegram Bot API adapter for Msgly",
   "license": "MIT",
   "type": "module",

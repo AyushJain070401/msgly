@@ -370,7 +370,10 @@ function toTeamsOutbound(content: MessageContent): Record<string, unknown> {
             contentType: 'application/vnd.microsoft.card.hero',
             content: {
               text: content.text,
-              buttons: content.buttons.slice(0, 6).map((b) => ({
+              buttons: (Array.isArray(content.buttons[0])
+                ? (content.buttons as import('@msgly/core').InteractiveButton[][]).flat()
+                : (content.buttons as import('@msgly/core').InteractiveButton[])
+              ).slice(0, 6).map((b) => ({
                 type: 'messageBack',
                 title: b.label.slice(0, 80),
                 value: b.id,

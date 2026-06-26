@@ -64,7 +64,16 @@ export interface InteractiveButton {
 export interface InteractiveContent {
   type: 'interactive';
   text: string;
-  buttons: InteractiveButton[];
+  /**
+   * 1D array = single row of buttons (back-compat).
+   * 2D array = explicit multi-row layout (e.g. Telegram inline keyboard grid).
+   */
+  buttons: InteractiveButton[] | InteractiveButton[][];
+  /**
+   * Telegram: 'inline' → inline_keyboard (callback_data); 'reply' → ReplyKeyboardMarkup (sends text).
+   * Other adapters ignore this and use their native equivalent.
+   */
+  keyboardType?: 'inline' | 'reply';
 }
 
 /** WhatsApp pre-approved template message. */
@@ -123,6 +132,19 @@ export interface InboundMessage extends BaseMessage {
   direction: 'inbound';
   /** Raw platform payload, useful for advanced cases. */
   raw?: unknown;
+  /**
+   * Populated when the inbound event is a button/postback interaction rather
+   * than a free-form message. Carries the platform's callback ID so adapters
+   * can acknowledge it (e.g. Telegram answerCallbackQuery within 10 s).
+   */
+  interaction?: {
+    /** Platform callback ID — must be ack'd to dismiss spinners. */
+    id: string;
+    /** The payload/data attached to the button (button.id, postback.payload). */
+    data?: string;
+  };
+  /** True when this is an edit of a previously sent message. */
+  edited?: boolean;
 }
 
 export interface OutboundMessage extends BaseMessage {

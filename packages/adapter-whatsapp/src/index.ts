@@ -138,20 +138,25 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
         },
       };
 
-    case 'interactive':
+    case 'interactive': {
+      // WhatsApp supports at most 3 reply buttons. Flatten 2D → 1D then take first 3.
+      const flat = Array.isArray(content.buttons[0])
+        ? (content.buttons as import('@msgly/core').InteractiveButton[][]).flat()
+        : (content.buttons as import('@msgly/core').InteractiveButton[]);
       return {
         type: 'interactive',
         interactive: {
           type: 'button',
           body: { text: content.text },
           action: {
-            buttons: content.buttons.slice(0, 3).map((b) => ({
+            buttons: flat.slice(0, 3).map((b) => ({
               type: 'reply',
               reply: { id: b.id, title: b.label.slice(0, 20) },
             })),
           },
         },
       };
+    }
 
     case 'template':
       return {
@@ -246,6 +251,8 @@ function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
       if (m.button?.text) return { type: 'text', text: m.button.text };
       if (m.interactive?.button_reply?.title)
         return { type: 'text', text: m.interactive.button_reply.title };
+      if (m.interactive?.list_reply?.title)
+        return { type: 'text', text: m.interactive.list_reply.title };
       return null;
     default:
       return null;
@@ -340,6 +347,11 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
 
           const profileName = value.contacts?.[0]?.profile?.name;
 
+          const interactionId =
+            m.interactive?.button_reply?.id ??
+            m.interactive?.list_reply?.id ??
+            m.button?.payload;
+
           messages.push({
             id: randomId(),
             externalId: m.id,
@@ -358,6 +370,9 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
             content,
             timestamp: new Date(Number(m.timestamp) * 1000).toISOString(),
             raw: m,
+            ...(interactionId
+              ? { interaction: { id: interactionId, data: interactionId } }
+              : {}),
           });
         }
       }
@@ -622,6 +637,7 @@ interface WhatsAppInboundMessage {
   };
   button?: { text: string; payload?: string };
   interactive?: {
+    type?: string;
     button_reply?: { id: string; title: string };
     list_reply?: { id: string; title: string };
   };

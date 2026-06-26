@@ -12,7 +12,9 @@ export type ChannelName =
   | 'discord'
   | 'msteams'
   | 'gmail'
-  | 'outlook';
+  | 'outlook'
+  | 'slack'
+  | 'wechat';
 
 export type MessageDirection = 'inbound' | 'outbound';
 

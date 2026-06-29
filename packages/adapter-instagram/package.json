@@ -1,6 +1,6 @@
 {
   "name": "@msgly/instagram",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Instagram Direct adapter for Msgly",
   "license": "MIT",
   "type": "module",

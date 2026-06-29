@@ -1,6 +1,6 @@
 {
   "name": "@msgly/msteams",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Microsoft Teams (Bot Framework) adapter for Msgly",
   "license": "MIT",
   "type": "module",

@@ -48,7 +48,7 @@ const CAPABILITIES: AdapterCapabilities = {
   interactive: { buttons: true, quickReplies: true },
   templates: false,
   reactions: false,
-  typing: false,
+  typing: true,
 };
 
 function randomId(): string {
@@ -272,6 +272,17 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
     return messages;
   }
 
+  async function sendTyping(contact: import('@msgly/core').ContactRef): Promise<void> {
+    // LINE Loading Animation API — only works in 1:1 chats (user has followed the OA).
+    // loadingSeconds must be 5–60 and is rounded to the nearest 5 by the platform.
+    await fetch(`${apiBase()}/v2/bot/chat/loading/start`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ chatId: contact.channelUserId, loadingSeconds: 20 }),
+    });
+    // Intentionally ignore errors — a missing typing indicator is non-fatal.
+  }
+
   async function verifySignature(req: WebhookRequest): Promise<boolean> {
     const headerValue = req.headers['x-line-signature'];
     const signature = Array.isArray(headerValue) ? headerValue[0] : headerValue;
@@ -366,6 +377,7 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
     uploadMedia,
     downloadMedia,
     verifyCredentials,
+    sendTyping,
   };
 }
 

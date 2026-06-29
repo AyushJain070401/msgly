@@ -331,7 +331,7 @@ Cross-channel matrix:
 | quick replies  | ✓        | ✓        | ✓    | ✓         | ✓         | —       | —     | —     | ✓      | —     | —       |
 | templates      | —        | ✓        | —    | —         | —         | —       | —     | —     | —      | —     | —       |
 | reactions      | ✓        | ✓        | —    | —         | ✓         | —       | —     | —     | —      | —     | —       |
-| typing         | ✓        | ✓†       | —    | ✓         | ✓         | —       | ✓     | —     | —      | —     | —       |
+| typing         | ✓        | ✓†       | ✓    | ✓         | ✓         | —       | ✓     | —     | —      | —     | —       |
 
 † WhatsApp requires the inbound message's `externalId` — use `adapter.sendTypingIndicator(contact, externalMessageId)` rather than the generic `sendTyping(contact)`.
 

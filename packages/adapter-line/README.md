@@ -95,7 +95,27 @@ interface LineConfig {
 | quick replies | ✓ (max 13, 20-char labels) |
 | templates     | —         |
 | reactions     | —         |
-| typing        | —         |
+| typing        | ✓         |
+
+## Typing indicator
+
+```typescript
+hub.on('message', async (msg) => {
+  if (msg.channel !== 'line') return;
+
+  const adapter = hub.getAdapter('line') as LineAdapter;
+  await adapter.sendTyping?.(msg.contact);  // shows the loading animation
+
+  const reply = await generateReply(msg);   // AI work, etc.
+
+  await hub.send({ channel: 'line', account: msg.account, contact: msg.contact,
+    content: { type: 'text', text: reply } });
+});
+```
+
+This calls LINE's [Loading Animation API](https://developers.line.biz/en/reference/messaging-api/#send-loading-animation) (`POST /v2/bot/chat/loading/start`) with `loadingSeconds: 20`. The animation disappears when you send a message or after the specified time. Errors are silently swallowed — a missing animation is non-fatal.
+
+> **1:1 chats only.** The Loading Animation API only works in conversations where the user has followed your Official Account. It will silently fail in group chats.
 
 ## Reply tokens (free vs push)
 

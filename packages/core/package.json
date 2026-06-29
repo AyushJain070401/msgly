@@ -1,6 +1,6 @@
 {
   "name": "@msgly/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Core engine for the messaging hub — unified message model, adapter contract, event bus",
   "license": "MIT",
   "type": "module",

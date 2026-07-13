@@ -1,13 +1,13 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, Slack, and WeChat. One API, every channel — chat and email together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, Slack, WeChat, Twilio SMS, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why
 
-Building a chatbot or notification system that works across multiple channels means learning five different APIs, five webhook formats, five different media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
+Building a chatbot or notification system that works across multiple channels means learning many different APIs, webhook formats, and media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
 
 ## Status
 
@@ -24,6 +24,8 @@ Building a chatbot or notification system that works across multiple channels me
 | WeChat          | `@msgly/wechat`       | Implemented (Official Account) |
 | Gmail           | `@msgly/gmail`        | Implemented (Pub/Sub push, text-only v1) |
 | Outlook / M365  | `@msgly/outlook`      | Implemented (Graph notifications, text-only v1) |
+| Twilio SMS      | `@msgly/twilio-sms`   | Implemented (SMS + MMS images) |
+| Twilio Voice    | `@msgly/twilio-voice` | Implemented (TwiML, Gather, outbound calls) |
 | Core engine     | `@msgly/core`         | Implemented |
 
 ## 60-second quickstart
@@ -126,7 +128,7 @@ That's it. You have a working chatbot built on Msgly.
 
 ```bash
 # Install only the channels you need
-npm install @msgly/core @msgly/whatsapp @msgly/telegram
+npm install @msgly/core @msgly/whatsapp @msgly/telegram @msgly/twilio-sms
 ```
 
 ## Quick start (multi-channel echo bot)
@@ -684,6 +686,111 @@ Full walkthrough in [packages/adapter-outlook/README.md](packages/adapter-outloo
 >
 > **State persistence**: pass `stateStore: redis` to auto-persist the OAuth token cache across restarts. See [State persistence](#state-persistence-redis--any-kv-store).
 
+### Twilio SMS (10 minutes)
+
+Twilio SMS uses webhook POST requests (form-encoded) for inbound messages and the REST API for outbound. The adapter supports both SMS and MMS (images).
+
+**1. Get your credentials.** Sign up at [twilio.com](https://www.twilio.com), then go to **Console** → **Account Info**. Copy:
+
+- **Account SID** (starts with `AC`) → `TWILIO_ACCOUNT_SID`
+- **Auth Token** → `TWILIO_AUTH_TOKEN`
+
+**2. Get a phone number.** Console → **Phone Numbers** → **Buy a number** (or use the free trial number). Copy it in E.164 format (e.g. `+15551234567`) → `TWILIO_PHONE_NUMBER`.
+
+**3. Set environment variables:**
+
+```bash
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+15551234567
+TWILIO_WEBHOOK_URL=<PUBLIC_URL>/webhook/twilio-sms
+```
+
+**4. Configure the webhook URL.** Console → **Phone Numbers** → select your number → **Messaging** section → "A message comes in" → Webhook → `<PUBLIC_URL>/webhook/twilio-sms` → HTTP POST.
+
+**5. Wire up in code:**
+
+```typescript
+import { createTwilioSmsAdapter } from '@msgly/twilio-sms';
+
+hub.register(createTwilioSmsAdapter({
+  accountSid: process.env.TWILIO_ACCOUNT_SID!,
+  authToken: process.env.TWILIO_AUTH_TOKEN!,
+  phoneNumber: process.env.TWILIO_PHONE_NUMBER!,
+  webhookUrl: process.env.TWILIO_WEBHOOK_URL,
+}));
+```
+
+**6. Test.** Send an SMS to your Twilio number from your personal phone. The bot echoes back.
+
+> **MMS support**: the adapter handles inbound MMS images automatically. For outbound MMS, send `content: { type: 'image', mediaRef: { kind: 'url', value: 'https://...' } }`.
+
+### Twilio Voice (15 minutes)
+
+Twilio Voice uses webhook POST requests for incoming calls and user input (DTMF/speech). Your app responds with TwiML (XML) to control the call flow. The adapter also supports initiating outbound calls.
+
+**1. Same credentials as SMS** — `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and a voice-capable `TWILIO_PHONE_NUMBER`.
+
+**2. Set environment variables:**
+
+```bash
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+15551234567
+TWILIO_VOICE_WEBHOOK_URL=<PUBLIC_URL>/webhook/twilio-voice
+```
+
+**3. Configure the webhook URL.** Console → **Phone Numbers** → select your number → **Voice** section → "A call comes in" → Webhook → `<PUBLIC_URL>/webhook/twilio-voice` → HTTP POST.
+
+**4. Wire up in code:**
+
+```typescript
+import { createTwilioVoiceAdapter, twiml } from '@msgly/twilio-voice';
+
+hub.register(createTwilioVoiceAdapter({
+  accountSid: process.env.TWILIO_ACCOUNT_SID!,
+  authToken: process.env.TWILIO_AUTH_TOKEN!,
+  phoneNumber: process.env.TWILIO_PHONE_NUMBER!,
+  webhookUrl: process.env.TWILIO_VOICE_WEBHOOK_URL,
+}));
+
+hub.on('message', async (msg) => {
+  if (msg.channel === 'twilio-voice' && msg.content.type === 'text') {
+    // Respond with TwiML — the adapter returns it as the webhook response
+    await hub.send({
+      channel: 'twilio-voice',
+      account: msg.account,
+      contact: msg.contact,
+      content: {
+        type: 'text',
+        text: twiml.wrap(
+          twiml.say('Thanks for calling!'),
+          twiml.gather(twiml.say('Press 1 for sales, 2 for support.'), {
+            input: 'dtmf',
+            numDigits: 1,
+          }),
+        ),
+      },
+      metadata: msg.metadata,
+    });
+  }
+});
+```
+
+**5. Outbound calls:**
+
+```typescript
+const voice = hub.getAdapter('twilio-voice') as TwilioVoiceAdapter;
+await voice.initiateCall({
+  to: '+15559876543',
+  twiml: twiml.wrap(twiml.say('Hello, this is an automated call.')),
+});
+```
+
+**6. Test.** Call your Twilio number from your phone. The bot responds with the TwiML you defined.
+
+> **Input types**: DTMF digits arrive as `msg.content.text` (e.g. `"1"`). Speech input (from `<Gather input="speech">`) arrives the same way. Recordings arrive as `audio` content with the recording URL.
+
 ### Did something go wrong?
 
 #### "Credentials check failed" at startup
@@ -720,10 +827,10 @@ Developer's app
        ↓                  retry, idempotency, capability checks
 Channel adapters       ←  one package per platform, each implements Adapter,
        ↓                  each ships its own verifyCredentials()
-Platform APIs (Telegram, Meta, LINE)
+Platform APIs (Telegram, Meta, LINE, Twilio, Google, Microsoft, ...)
 ```
 
-Every adapter implements the same `Adapter` abstract class. Adding a sixth channel is one new package — no core changes needed.
+Every adapter implements the same `Adapter` interface. Adding a new channel is one new package — no core changes needed.
 
 ## Development
 

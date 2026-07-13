@@ -14,7 +14,9 @@ export type ChannelName =
   | 'gmail'
   | 'outlook'
   | 'slack'
-  | 'wechat';
+  | 'wechat'
+  | 'twilio-sms'
+  | 'twilio-voice';
 
 export type MessageDirection = 'inbound' | 'outbound';
 

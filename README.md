@@ -210,6 +210,44 @@ const hub = createHub({
 });
 ```
 
+### State persistence (Redis / any KV store)
+
+Adapters that hold sync state (Gmail's `lastHistoryId`, OAuth token caches) lose that state on process restart or when recreating the adapter in a serverless function. Pass a `stateStore` to auto-persist and auto-restore — the interface is intentionally compatible with ioredis and node-redis, so you can pass your Redis client directly:
+
+```typescript
+import Redis from 'ioredis';
+import { createGmailAdapter } from '@msgly/gmail';
+import { createOutlookAdapter } from '@msgly/outlook';
+
+const redis = new Redis();
+
+// Gmail: persists lastHistoryId — no more cold-start fetching 25 recent messages
+const gmail = createGmailAdapter({
+  ...gmailConfig,
+  stateStore: redis,
+});
+
+// Outlook: persists OAuth token cache — no unnecessary token refreshes
+const outlook = createOutlookAdapter({
+  ...outlookConfig,
+  stateStore: redis,
+});
+```
+
+The `StateStore` interface is minimal — any object with async `get(key)` and `set(key, value)` works:
+
+```typescript
+import type { StateStore } from '@msgly/core';
+
+// Custom store backed by DynamoDB, Postgres, etc.
+const store: StateStore = {
+  async get(key) { /* return string | null */ },
+  async set(key, value) { /* persist string */ },
+};
+```
+
+Keys are auto-namespaced per adapter and email (e.g. `msgly:gmail:agent@co.com:historyId`). Override with `stateKeyPrefix` if needed. For development, `createInMemoryStateStore()` from `@msgly/core` works without external dependencies.
+
 ### Capability checks
 
 The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle:
@@ -627,6 +665,8 @@ Full walkthrough (with curl commands) in [packages/adapter-gmail/README.md](pack
 5. Send the agent an email. Your handler receives it.
 
 > **v1 scope**: text only, single bot mailbox per adapter. Attachments and multi-user routing are planned.
+>
+> **State persistence**: pass `stateStore: redis` to auto-persist the history cursor across restarts. See [State persistence](#state-persistence-redis--any-kv-store).
 
 ### Outlook / Microsoft 365 (one-time ~20 minutes — Entra ID)
 
@@ -641,6 +681,8 @@ Full walkthrough in [packages/adapter-outlook/README.md](packages/adapter-outloo
 5. Schedule `adapter.renewSubscription(id)` daily — Graph caps message subscriptions at ~3 days.
 
 > **v1 scope**: text only, single bot mailbox per adapter. Attachments and multi-user routing are planned.
+>
+> **State persistence**: pass `stateStore: redis` to auto-persist the OAuth token cache across restarts. See [State persistence](#state-persistence-redis--any-kv-store).
 
 ### Did something go wrong?
 

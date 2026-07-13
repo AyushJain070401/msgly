@@ -7,6 +7,7 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  StateStore,
   WebhookRequest,
 } from '@msgly/core';
 
@@ -34,6 +35,43 @@ export interface OutlookConfig {
    * Set the same value when calling `createSubscription`.
    */
   clientState: string;
+
+  /**
+   * Key-value store for persisting adapter state (OAuth token cache) across
+   * adapter recreations. Compatible with ioredis and node-redis — pass your
+   * Redis client directly:
+   *
+   * ```ts
+   * import Redis from 'ioredis';
+   * const outlook = createOutlookAdapter({ ...cfg, stateStore: new Redis() });
+   * ```
+   *
+   * When set, the adapter auto-restores the cached access token on first use
+   * and auto-persists it after every refresh. Supersedes `cachedAccessToken`
+   * for reads (writes still fire `onTokenRefresh` if set).
+   */
+  stateStore?: StateStore;
+  /**
+   * Optional prefix for keys written to `stateStore`.
+   * Default: `"msgly:outlook:{emailAddress}"`.
+   */
+  stateKeyPrefix?: string;
+  /**
+   * Restore a previously-cached access token so the adapter skips the initial
+   * token refresh. Pair with `onTokenRefresh` to persist updates. Ignored when
+   * `stateStore` is provided.
+   */
+  cachedAccessToken?: { token: string; expiresAt: number };
+  /**
+   * Called after every successful OAuth token refresh. Fires regardless of
+   * whether `stateStore` is set — useful for logging or side-effects beyond
+   * persistence.
+   */
+  onTokenRefresh?: (state: {
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: number;
+  }) => void | Promise<void>;
 
   /** Override the OAuth token endpoint. */
   tokenUrl?: string;
@@ -123,11 +161,59 @@ function createTokenCache(
   clientSecret: string,
   refreshToken: string,
   scope: string,
+  opts?: {
+    cachedAccessToken?: { token: string; expiresAt: number };
+    stateStore?: StateStore | null;
+    stateKeyPrefix?: string;
+    onTokenRefresh?: (state: {
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    }) => void | Promise<void>;
+  },
 ) {
-  let accessToken: string | null = null;
+  let accessToken: string | null = opts?.cachedAccessToken?.token ?? null;
   let currentRefreshToken = refreshToken;
-  let expiresAt = 0;
+  let expiresAt = opts?.cachedAccessToken?.expiresAt ?? 0;
   let inflight: Promise<string> | null = null;
+  let storeRestored = !opts?.stateStore;
+
+  async function restoreFromStore(): Promise<void> {
+    if (storeRestored) return;
+    storeRestored = true;
+    try {
+      const raw = await opts!.stateStore!.get(`${opts!.stateKeyPrefix}:tokenState`);
+      if (!raw) return;
+      const state = JSON.parse(raw) as {
+        accessToken?: string;
+        refreshToken?: string;
+        expiresAt?: number;
+      };
+      if (state.accessToken && typeof state.expiresAt === 'number' && Date.now() < state.expiresAt) {
+        accessToken = state.accessToken;
+        expiresAt = state.expiresAt;
+      }
+      if (state.refreshToken) currentRefreshToken = state.refreshToken;
+    } catch {
+      // store unavailable or corrupt — fall through to normal refresh
+    }
+  }
+
+  async function persistToStore(): Promise<void> {
+    if (!opts?.stateStore) return;
+    try {
+      await opts.stateStore.set(
+        `${opts.stateKeyPrefix}:tokenState`,
+        JSON.stringify({
+          accessToken,
+          refreshToken: currentRefreshToken,
+          expiresAt,
+        }),
+      );
+    } catch {
+      // best-effort
+    }
+  }
 
   async function fetchToken(): Promise<string> {
     const res = await fetch(tokenUrl, {
@@ -158,10 +244,17 @@ function createTokenCache(
     accessToken = data.access_token;
     if (data.refresh_token) currentRefreshToken = data.refresh_token;
     expiresAt = Date.now() + (data.expires_in ?? 3600) * 1000 - 60_000;
+    opts?.onTokenRefresh?.({
+      accessToken,
+      refreshToken: currentRefreshToken,
+      expiresAt,
+    });
+    await persistToStore();
     return accessToken;
   }
 
   async function get(): Promise<string> {
+    await restoreFromStore();
     if (accessToken && Date.now() < expiresAt) return accessToken;
     if (inflight) return inflight;
     inflight = fetchToken();
@@ -243,12 +336,20 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
   const tokenUrl = config.tokenUrl ?? DEFAULT_TOKEN_URL(tenant);
   const graphBase = config.graphBase ?? DEFAULT_GRAPH_BASE;
 
+  const statePrefix = config.stateKeyPrefix ?? `msgly:outlook:${config.emailAddress}`;
+
   const tokens = createTokenCache(
     tokenUrl,
     config.clientId,
     config.clientSecret,
     config.refreshToken,
     DEFAULT_SCOPE,
+    {
+      cachedAccessToken: config.cachedAccessToken,
+      stateStore: config.stateStore ?? null,
+      stateKeyPrefix: statePrefix,
+      onTokenRefresh: config.onTokenRefresh,
+    },
   );
 
   async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {

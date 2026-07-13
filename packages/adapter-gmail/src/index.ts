@@ -7,6 +7,7 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  StateStore,
   WebhookRequest,
 } from '@msgly/core';
 
@@ -48,6 +49,40 @@ export interface GmailConfig {
     | { kind: 'token'; token: string }
     | { kind: 'none' };
 
+  /**
+   * Key-value store for persisting adapter state (history cursor, token cache)
+   * across adapter recreations. Compatible with ioredis and node-redis — pass
+   * your Redis client directly:
+   *
+   * ```ts
+   * import Redis from 'ioredis';
+   * const gmail = createGmailAdapter({ ...cfg, stateStore: new Redis() });
+   * ```
+   *
+   * When set, the adapter auto-restores `lastHistoryId` on the first webhook
+   * and auto-persists it after every update. Supersedes `initialHistoryId` for
+   * reads (writes still fire `onHistoryIdChange` if set).
+   */
+  stateStore?: StateStore;
+  /**
+   * Optional prefix for keys written to `stateStore`.
+   * Default: `"msgly:gmail:{emailAddress}"`.
+   */
+  stateKeyPrefix?: string;
+  /**
+   * Seed the adapter with a previously-persisted history ID so it can resume
+   * incremental sync instead of falling back to "recent unread" on cold start.
+   * Pair with `onHistoryIdChange` to persist updates. Ignored when `stateStore`
+   * is provided (the store is used instead).
+   */
+  initialHistoryId?: string;
+  /**
+   * Called whenever the internal history cursor advances (after each webhook).
+   * Fires regardless of whether `stateStore` is set — useful for logging or
+   * side-effects beyond persistence.
+   */
+  onHistoryIdChange?: (historyId: string) => void | Promise<void>;
+
   /** Cap how many messages we fetch per Pub/Sub notification. Default: 25. */
   maxMessagesPerNotification?: number;
   /** Override the Google OAuth token endpoint. Default: oauth2.googleapis.com. */
@@ -62,6 +97,8 @@ export interface GmailConfig {
 
 export interface GmailAdapter extends Adapter {
   readonly channel: 'gmail';
+  /** Current history cursor. `null` until the first webhook or `watch()` call. */
+  readonly historyId: string | null;
   /**
    * Call once at deploy time to subscribe the mailbox to a Pub/Sub topic.
    * The topic must already grant publish permission to
@@ -502,7 +539,32 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
   const tokens = createTokenCache(tokenUrl, config.clientId, config.clientSecret, config.refreshToken);
   const jwks = createJwksCache(jwksUrl, 24 * 60 * 60 * 1000);
 
-  let lastHistoryId: string | null = null;
+  const stateStore = config.stateStore ?? null;
+  const statePrefix = config.stateKeyPrefix ?? `msgly:gmail:${config.emailAddress}`;
+  let lastHistoryId: string | null = config.initialHistoryId ?? null;
+  let stateRestored = !stateStore;
+
+  async function restoreStateOnce(): Promise<void> {
+    if (stateRestored) return;
+    stateRestored = true;
+    try {
+      const stored = await stateStore!.get(`${statePrefix}:historyId`);
+      if (stored && !lastHistoryId) lastHistoryId = stored;
+    } catch {
+      // store unavailable — fall through to cold-start path
+    }
+  }
+
+  async function persistHistoryId(historyId: string): Promise<void> {
+    config.onHistoryIdChange?.(historyId);
+    if (stateStore) {
+      try {
+        await stateStore.set(`${statePrefix}:historyId`, historyId);
+      } catch {
+        // best-effort — next cold start will fall back to recent messages
+      }
+    }
+  }
 
   async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const token = await tokens.get();
@@ -527,6 +589,7 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
       throw new Error(`Gmail watch failed (${res.status}): ${data.error?.message ?? 'no historyId'}`);
     }
     lastHistoryId = data.historyId;
+    await persistHistoryId(data.historyId);
     return { historyId: data.historyId };
   }
 
@@ -620,6 +683,8 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
   }
 
   async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
+    await restoreStateOnce();
+
     // Pub/Sub push body: { message: { data: <base64>, ... }, subscription }
     const body = req.body as
       | { message?: { data?: string }; subscription?: string }
@@ -642,6 +707,8 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
       messageIds = await listRecentInboxMessageIds(maxMessages);
     }
     lastHistoryId = notification.historyId;
+    await persistHistoryId(notification.historyId);
+
 
     const out: InboundMessage[] = [];
     for (const id of messageIds) {
@@ -815,6 +882,9 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
 
   return {
     channel: 'gmail',
+    get historyId() {
+      return lastHistoryId;
+    },
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

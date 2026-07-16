@@ -101,6 +101,10 @@ interface SlackConfig {
 | typing        | —         |
 | templates     | —         |
 
+`typing` is listed as unsupported because Slack has no native indicator for
+bots — see [Beyond `send()`](#beyond-send-editing-messages-response_url-threads)
+above for the "thinking…" placeholder pattern and the native Assistant status API.
+
 ## Sending examples
 
 ### Formatted text (mrkdwn)
@@ -182,6 +186,105 @@ await hub.send({
     ],
   },
 });
+```
+
+## Beyond `send()`: editing messages, response_url, threads
+
+The unified `send()` / `handleWebhook()` contract covers posting and receiving
+messages, but Slack's richer interaction patterns need direct Web API calls.
+`createSlackAdapter` exposes a few extra methods for this — grab the
+concrete adapter instance (the one you passed to `hub.register`) to call them.
+
+### Echo the button choice, then remove the buttons
+
+When a button is clicked, the inbound message carries the interaction's
+`response_url` at `msg.metadata.responseUrl`. Post back through it to replace
+the original message (buttons and all):
+
+```typescript
+hub.on('message', async (msg) => {
+  if (msg.interaction && msg.metadata?.responseUrl) {
+    await slack.respondToInteraction(msg.metadata.responseUrl as string, {
+      text: `You asked: ${msg.interaction.data}`,
+      replaceOriginal: true, // swaps out the original message, buttons included
+    });
+  }
+});
+```
+
+`slack` here is the object returned by `createSlackAdapter(...)`.
+
+### "Thinking…" placeholder, then update with the real answer
+
+Slack bots have no native typing indicator — post a placeholder message,
+keep its `ts` (returned as `externalId`), then edit it in place with
+`chat.update` once the answer is ready:
+
+```typescript
+hub.on('message', async (msg) => {
+  const placeholder = await hub.send({
+    channel: 'slack',
+    account: msg.account,
+    contact: msg.contact,
+    content: { type: 'text', text: '⏳ Eshal AI is typing…' },
+  });
+
+  const answer = await getAnswer(msg); // however you generate the reply
+
+  await slack.updateMessage({
+    channel: msg.contact.channelUserId,
+    ts: placeholder.externalId!,
+    text: answer,
+  });
+});
+```
+
+### Reply in a thread
+
+Pass the parent message's `ts` as `metadata.threadTs` on the outbound
+message — `send()` forwards it as Slack's `thread_ts`. To keep a whole
+conversation threaded, forward the inbound message's own
+`metadata.threadTs` (set automatically when the incoming event/interaction
+was itself inside a thread), falling back to its `externalId` for the first
+reply:
+
+```typescript
+hub.on('message', async (msg) => {
+  await hub.send({
+    channel: 'slack',
+    account: msg.account,
+    contact: msg.contact,
+    content: { type: 'text', text: 'Replying in-thread' },
+    metadata: { threadTs: (msg.metadata?.threadTs as string) ?? msg.externalId },
+  });
+});
+```
+
+### Native Slack AI Assistant status (`assistant.threads.setStatus`)
+
+For the full native "is thinking…" experience — a dedicated assistant pane
+and suggested-prompt chips — configure the app as an **Assistant** (Agents &
+Assistants feature, App Settings → Features → Agents & Assistants at
+api.slack.com; this part can't be done from code) and subscribe to the
+`assistant_thread_started` / `assistant_thread_context_changed` events. The
+adapter parses those into inbound messages with
+`msg.metadata.slackEvent`/`threadTs`/`channelId`, and exposes the matching
+Web API calls:
+
+```typescript
+hub.on('message', async (msg) => {
+  if (msg.metadata?.slackEvent === 'assistant_thread_started') {
+    const { channelId, threadTs } = msg.metadata as { channelId: string; threadTs: string };
+    await slack.setAssistantSuggestedPrompts({
+      channelId,
+      threadTs,
+      prompts: [{ title: 'What is Katonic AI?', message: 'What is Katonic AI?' }],
+    });
+  }
+});
+
+// While generating a reply in an assistant thread:
+await slack.setAssistantStatus({ channelId, threadTs, status: 'is thinking...' });
 ```
 
 ## Webhook setup notes

@@ -23,6 +23,69 @@ export interface SlackConfig {
 
 export interface SlackAdapter extends Adapter {
   readonly channel: 'slack';
+
+  /**
+   * Edit an existing message in place (`chat.update`). Use this to remove
+   * buttons after a click or to replace a "⏳ thinking…" placeholder with
+   * the final answer — post the placeholder with `send()`, keep its
+   * `externalId` (the message `ts`), then call this once the real reply
+   * is ready.
+   */
+  updateMessage(params: {
+    channel: string;
+    ts: string;
+    text: string;
+    blocks?: unknown[];
+  }): Promise<{ ts: string }>;
+
+  /** Delete a message (`chat.delete`). */
+  deleteMessage(params: { channel: string; ts: string }): Promise<void>;
+
+  /**
+   * Post back through a Block Kit interaction's `response_url` — the
+   * simplest way to acknowledge a button click. `replaceOriginal: true`
+   * swaps the original message (buttons included) for `text`/`blocks`.
+   * The webhook's inbound message carries this URL at
+   * `interaction`-bearing messages' `metadata.responseUrl`.
+   */
+  respondToInteraction(
+    responseUrl: string,
+    params: {
+      text: string;
+      blocks?: unknown[];
+      replaceOriginal?: boolean;
+      deleteOriginal?: boolean;
+      responseType?: 'in_channel' | 'ephemeral';
+    },
+  ): Promise<void>;
+
+  /**
+   * Set the "is thinking…" status shown in a native Slack AI Assistant
+   * thread (`assistant.threads.setStatus`). Only meaningful once the app
+   * is configured as an Assistant (Agents & Assistants feature, enabled
+   * in the app's manifest at api.slack.com) and Slack has sent an
+   * `assistant_thread_started` event — see the README.
+   */
+  setAssistantStatus(params: {
+    channelId: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void>;
+
+  /** Set the suggested-prompt chips shown in an Assistant thread (`assistant.threads.setSuggestedPrompts`). */
+  setAssistantSuggestedPrompts(params: {
+    channelId: string;
+    threadTs: string;
+    title?: string;
+    prompts: Array<{ title: string; message: string }>;
+  }): Promise<void>;
+
+  /** Set the title shown above an Assistant thread (`assistant.threads.setTitle`). */
+  setAssistantTitle(params: {
+    channelId: string;
+    threadTs: string;
+    title: string;
+  }): Promise<void>;
 }
 
 /**
@@ -216,6 +279,11 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
         };
     }
 
+    // Reply in-thread: pass the parent message's ts via metadata.threadTs
+    // (e.g. forward it from an inbound message's own metadata.threadTs).
+    const threadTs = message.metadata?.['threadTs'] as string | undefined;
+    if (threadTs) payload['thread_ts'] = threadTs;
+
     try {
       const result = await callApi('chat.postMessage', payload);
       return {
@@ -235,6 +303,89 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
         },
       };
     }
+  }
+
+  async function updateMessage(params: {
+    channel: string;
+    ts: string;
+    text: string;
+    blocks?: unknown[];
+  }): Promise<{ ts: string }> {
+    const result = await callApi('chat.update', {
+      channel: params.channel,
+      ts: params.ts,
+      text: params.text,
+      ...(params.blocks ? { blocks: params.blocks } : {}),
+    });
+    return { ts: String(result['ts'] ?? params.ts) };
+  }
+
+  async function deleteMessage(params: { channel: string; ts: string }): Promise<void> {
+    await callApi('chat.delete', { channel: params.channel, ts: params.ts });
+  }
+
+  async function respondToInteraction(
+    responseUrl: string,
+    params: {
+      text: string;
+      blocks?: unknown[];
+      replaceOriginal?: boolean;
+      deleteOriginal?: boolean;
+      responseType?: 'in_channel' | 'ephemeral';
+    },
+  ): Promise<void> {
+    const res = await fetch(responseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        text: params.text,
+        ...(params.blocks ? { blocks: params.blocks } : {}),
+        ...(params.replaceOriginal !== undefined ? { replace_original: params.replaceOriginal } : {}),
+        ...(params.deleteOriginal !== undefined ? { delete_original: params.deleteOriginal } : {}),
+        ...(params.responseType ? { response_type: params.responseType } : {}),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Slack response_url POST failed: ${res.status} ${res.statusText}`);
+    }
+  }
+
+  async function setAssistantStatus(params: {
+    channelId: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void> {
+    await callApi('assistant.threads.setStatus', {
+      channel_id: params.channelId,
+      thread_ts: params.threadTs,
+      status: params.status,
+    });
+  }
+
+  async function setAssistantSuggestedPrompts(params: {
+    channelId: string;
+    threadTs: string;
+    title?: string;
+    prompts: Array<{ title: string; message: string }>;
+  }): Promise<void> {
+    await callApi('assistant.threads.setSuggestedPrompts', {
+      channel_id: params.channelId,
+      thread_ts: params.threadTs,
+      ...(params.title ? { title: params.title } : {}),
+      prompts: params.prompts,
+    });
+  }
+
+  async function setAssistantTitle(params: {
+    channelId: string;
+    threadTs: string;
+    title: string;
+  }): Promise<void> {
+    await callApi('assistant.threads.setTitle', {
+      channel_id: params.channelId,
+      thread_ts: params.threadTs,
+      title: params.title,
+    });
   }
 
   function getInteractionAck(
@@ -271,7 +422,9 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
       const teamId = (body['team'] as { id?: string } | undefined)?.id ?? 'unknown';
       const channel = (body['channel'] as { id?: string } | undefined)?.id ?? '';
       const userId = (body['user'] as { id?: string } | undefined)?.id ?? 'unknown';
-      const message = body['message'] as { ts?: string } | undefined;
+      const message = body['message'] as { ts?: string; thread_ts?: string } | undefined;
+      const responseUrl = body['response_url'] as string | undefined;
+      const threadTs = message?.thread_ts;
 
       return [
         {
@@ -284,6 +437,10 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
           content: { type: 'text', text: action.value ?? action.action_id ?? '' },
           timestamp: new Date().toISOString(),
           interaction: { id: action.action_id ?? '', data: action.value },
+          metadata: {
+            ...(responseUrl ? { responseUrl } : {}),
+            ...(threadTs ? { threadTs } : {}),
+          },
           raw: body,
         },
       ];
@@ -298,6 +455,32 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
     const teamId = String(body['team_id'] ?? 'unknown');
     const evType = String(event['type'] ?? '');
 
+    // Slack AI Assistant thread lifecycle events — only fire once the app is
+    // configured as an Assistant (see README). No bot_id/subtype on these.
+    if (evType === 'assistant_thread_started' || evType === 'assistant_thread_context_changed') {
+      const thread = event['assistant_thread'] as
+        | { channel_id?: string; thread_ts?: string; context?: unknown }
+        | undefined;
+      if (!thread) return [];
+
+      const channelId = String(thread.channel_id ?? 'unknown');
+      const threadTs = String(thread.thread_ts ?? '');
+
+      return [
+        {
+          id: randomId(),
+          channel: 'slack',
+          direction: 'inbound',
+          account: { channel: 'slack', channelAccountId: teamId },
+          contact: { channel: 'slack', channelUserId: channelId, displayName: channelId },
+          content: { type: 'text', text: '' },
+          timestamp: new Date().toISOString(),
+          metadata: { slackEvent: evType, threadTs, channelId, context: thread.context },
+          raw: body,
+        },
+      ];
+    }
+
     // Skip bot messages and non-user events to avoid loops
     if (event['bot_id']) return [];
     if (event['subtype'] && event['subtype'] !== 'me_message') return [];
@@ -308,6 +491,7 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
     const userId = String(event['user'] ?? 'unknown');
     const channelId = String(event['channel'] ?? 'unknown');
     const ts = String(event['ts'] ?? '');
+    const threadTs = event['thread_ts'] as string | undefined;
 
     return [
       {
@@ -321,6 +505,7 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
         timestamp: ts
           ? new Date(parseFloat(ts) * 1000).toISOString()
           : new Date().toISOString(),
+        ...(threadTs ? { metadata: { threadTs } } : {}),
         raw: body,
       },
     ];
@@ -390,5 +575,11 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
     uploadMedia,
     downloadMedia,
     verifyCredentials,
+    updateMessage,
+    deleteMessage,
+    respondToInteraction,
+    setAssistantStatus,
+    setAssistantSuggestedPrompts,
+    setAssistantTitle,
   };
 }

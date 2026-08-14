@@ -26,6 +26,8 @@ export type KnownChannel =
   | 'sendgrid'
   | 'viber'
   | 'mattermost'
+  | 'rocketchat'
+  | 'googlechat'
   | 'twilio-sms'
   | 'twilio-voice';
 

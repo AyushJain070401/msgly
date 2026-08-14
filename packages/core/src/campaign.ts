@@ -63,6 +63,10 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   viber: { perSecond: 20, burst: 40 },
   // Mattermost is self-hosted; the default rate limit is 10 req/s per server.
   mattermost: { perSecond: 8, burst: 10 },
+  // Rocket.Chat is self-hosted; its default REST rate limit is modest.
+  rocketchat: { perSecond: 8, burst: 10 },
+  // Google Chat allows ~60 write requests/min per space.
+  googlechat: { perSecond: 1, burst: 3 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

@@ -24,6 +24,8 @@ export type KnownChannel =
   | 'resend'
   | 'telnyx'
   | 'sendgrid'
+  | 'viber'
+  | 'mattermost'
   | 'twilio-sms'
   | 'twilio-voice';
 

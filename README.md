@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,6 +24,8 @@ Building a chatbot or notification system that works across multiple channels me
 | Microsoft Teams | `@msgly/msteams`   | Bot Framework, Adaptive Cards |
 | Slack           | `@msgly/slack`     | Events API + Block Kit |
 | WeChat          | `@msgly/wechat`    | Official Account |
+| **Viber**       | `@msgly/viber`     | **Business Messages, keyboards, signed webhooks** |
+| **Mattermost**  | `@msgly/mattermost` | **Self-hosted team chat, REST + outgoing webhooks** |
 
 ### Email
 

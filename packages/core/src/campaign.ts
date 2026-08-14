@@ -59,6 +59,10 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   telnyx: { perSecond: 10, burst: 20 },
   // SendGrid's v3 API is generous — the plan's daily quota binds first.
   sendgrid: { perSecond: 25, burst: 50 },
+  // Viber's public account send limit is generous but broadcast-metered.
+  viber: { perSecond: 20, burst: 40 },
+  // Mattermost is self-hosted; the default rate limit is 10 req/s per server.
+  mattermost: { perSecond: 8, burst: 10 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

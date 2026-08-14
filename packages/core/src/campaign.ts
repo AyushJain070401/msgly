@@ -48,6 +48,9 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   exotel: { perSecond: 5, burst: 10 },
   // Vonage's default account throughput is 30 SMS/s, raisable on request.
   'vonage-sms': { perSecond: 25, burst: 30 },
+  // MSG91 meters per account; DLT-registered headers are throttled by the
+  // operator downstream regardless of what the API accepts.
+  msg91: { perSecond: 20, burst: 40 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

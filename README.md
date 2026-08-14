@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Twilio SMS, Exotel, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Twilio SMS, Exotel, MSG91, Vonage, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -39,6 +39,8 @@ Building a chatbot or notification system that works across multiple channels me
 | ------------ | --------------------- | ----- |
 | Twilio SMS   | `@msgly/twilio-sms`   | SMS + MMS images |
 | **Exotel**   | `@msgly/exotel`       | **India-focused SMS with DLT compliance** |
+| **MSG91**    | `@msgly/msg91`        | **India SMS via the DLT Flow API, template-first** |
+| **Vonage**   | `@msgly/vonage-sms`   | **Global SMS, signed webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
 
 ### Core

@@ -19,6 +19,7 @@ export type KnownChannel =
   | 'smtp'
   | 'exotel'
   | 'vonage-sms'
+  | 'msg91'
   | 'twilio-sms'
   | 'twilio-voice';
 

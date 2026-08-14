@@ -315,6 +315,186 @@ describe('createOutlookAdapter', () => {
     ).toBe(false);
   });
 
+  it('reports no media capability until attachments are enabled', () => {
+    expect(createOutlookAdapter(baseConfig).capabilities.media.file).toBe(false);
+    const on = createOutlookAdapter({ ...baseConfig, attachments: { enabled: true } });
+    expect(on.capabilities.media.file).toBe(true);
+  });
+
+  it('sends a fileAttachment array on sendMail when enabled', async () => {
+    let sendBody: Record<string, unknown> | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      sendBody = JSON.parse((init?.body as string) ?? '{}');
+      return { ok: true, status: 202, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createOutlookAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const ref = await a.uploadMedia({
+      data: encode('CSV,DATA'),
+      mimeType: 'text/csv',
+      filename: 'report.csv',
+    });
+
+    const receipt = await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'outlook',
+      account: { channel: 'outlook', channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'outlook', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'report attached' },
+      attachments: [{ mediaRef: ref, filename: 'report.csv', mimeType: 'text/csv' }],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(receipt.status).toBe('sent');
+    const attachments = (sendBody?.message as Record<string, unknown>)
+      .attachments as Record<string, unknown>[];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name: 'report.csv',
+      contentType: 'text/csv',
+      contentBytes: btoa('CSV,DATA'),
+    });
+  });
+
+  it('puts attachments in the message sub-object when replying', async () => {
+    let replyBody: Record<string, unknown> | undefined;
+    let replyUrl = '';
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      replyUrl = url;
+      replyBody = JSON.parse((init?.body as string) ?? '{}');
+      return { ok: true, status: 202, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createOutlookAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const ref = await a.uploadMedia({ data: encode('x'), mimeType: 'text/plain' });
+    await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'outlook',
+      account: { channel: 'outlook', channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'outlook', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'replying' },
+      attachments: [{ mediaRef: ref, filename: 'note.txt', mimeType: 'text/plain' }],
+      timestamp: new Date().toISOString(),
+      metadata: { messageId: 'graph-msg-1' },
+    });
+
+    expect(replyUrl).toContain('/me/messages/graph-msg-1/reply');
+    expect(replyBody?.comment).toBe('replying');
+    const nested = replyBody?.message as { attachments: unknown[] };
+    expect(nested.attachments).toHaveLength(1);
+  });
+
+  it('rejects attachments over the Graph 3MB inline limit with an actionable error', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+    }) as Response) as unknown as typeof fetch;
+
+    const a = createOutlookAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const ref = await a.uploadMedia({
+      data: new Uint8Array(3 * 1024 * 1024 + 1),
+      mimeType: 'application/pdf',
+      filename: 'huge.pdf',
+    });
+
+    const receipt = await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'outlook',
+      account: { channel: 'outlook', channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'outlook', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'big one' },
+      attachments: [{ mediaRef: ref, filename: 'huge.pdf', mimeType: 'application/pdf' }],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('outlook_attachment_error');
+    expect(receipt.error?.message).toContain('upload session');
+  });
+
+  it('only expands attachments on inbound fetch when enabled', async () => {
+    const urls: string[] = [];
+    const mockFetch = () =>
+      vi.fn().mockImplementation(async (url: string) => {
+        if (url === baseConfig.tokenUrl) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+          } as Response;
+        }
+        urls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'gm-1',
+            subject: 'files',
+            from: { emailAddress: { address: 'bob@example.com', name: 'Bob' } },
+            body: { contentType: 'text', content: 'see attached' },
+            hasAttachments: true,
+            attachments: [
+              {
+                id: 'att-1',
+                name: 'deck.pptx',
+                contentType:
+                  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                size: 4096,
+              },
+            ],
+          }),
+        } as Response;
+      }) as unknown as typeof fetch;
+
+    const req = {
+      headers: {},
+      rawBody: encode(''),
+      body: {
+        value: [
+          {
+            clientState: 'shared-secret',
+            resourceData: { id: 'gm-1' },
+          },
+        ],
+      },
+      query: {},
+    };
+
+    globalThis.fetch = mockFetch();
+    const on = createOutlookAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const [withAttachments] = await on.handleWebhook(req);
+    expect(urls.some((u) => u.includes('$expand=attachments'))).toBe(true);
+    expect(withAttachments!.attachments).toHaveLength(1);
+    expect(withAttachments!.attachments![0]!.filename).toBe('deck.pptx');
+    expect(withAttachments!.attachments![0]!.mediaRef.value).toBe('gm-1:att-1');
+
+    urls.length = 0;
+    globalThis.fetch = mockFetch();
+    const off = createOutlookAdapter(baseConfig);
+    const [plain] = await off.handleWebhook(req);
+    expect(urls.some((u) => u.includes('$expand'))).toBe(false);
+    expect(plain!.attachments).toBeUndefined();
+  });
+
   it('verifyCredentials returns hint when clientState is missing', async () => {
     const a = createOutlookAdapter({ ...baseConfig, clientState: '' });
     const result = await a.verifyCredentials();

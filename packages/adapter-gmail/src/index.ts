@@ -1,6 +1,8 @@
 import type {
   Adapter,
   AdapterCapabilities,
+  Attachment,
+  AttachmentsConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
@@ -83,6 +85,16 @@ export interface GmailConfig {
    */
   onHistoryIdChange?: (historyId: string) => void | Promise<void>;
 
+  /**
+   * Opt in to attachment support. Off by default — leave it unset and this
+   * adapter behaves exactly as it always has.
+   *
+   * ```ts
+   * createGmailAdapter({ ...cfg, attachments: { enabled: true, maxSizeBytes: 25 * 1024 * 1024 } });
+   * ```
+   */
+  attachments?: AttachmentsConfig;
+
   /** Cap how many messages we fetch per Pub/Sub notification. Default: 25. */
   maxMessagesPerNotification?: number;
   /** Override the Google OAuth token endpoint. Default: oauth2.googleapis.com. */
@@ -136,14 +148,23 @@ const DEFAULT_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const DEFAULT_CLOCK_SKEW_SEC = 300;
 const DEFAULT_MAX_MESSAGES = 25;
 
-const CAPABILITIES: AdapterCapabilities = {
-  text: true,
-  media: { image: false, video: false, audio: false, file: false },
-  interactive: { buttons: false, quickReplies: false },
-  templates: false,
-  reactions: false,
-  typing: false,
-};
+/**
+ * Capabilities depend on config: email can carry any file type, but only once
+ * the developer opts in. Reporting `file: false` when they haven't is what
+ * makes the hub reject attachment sends up front instead of silently dropping
+ * the files.
+ */
+function buildCapabilities(attachments?: AttachmentsConfig): AdapterCapabilities {
+  const on = attachments?.enabled === true;
+  return {
+    text: true,
+    media: { image: on, video: on, audio: on, file: on },
+    interactive: { buttons: false, quickReplies: false },
+    templates: false,
+    reactions: false,
+    typing: false,
+  };
+}
 
 function randomId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
@@ -402,6 +423,44 @@ function findBodyByMimeType(
 }
 
 /**
+ * Collect every part that carries an `attachmentId` — Gmail reports attachment
+ * metadata inline but keeps the bytes behind a separate `attachments.get` call,
+ * so these references stay lazy until `downloadMedia` is called.
+ */
+function collectAttachments(
+  messageId: string,
+  payload: GmailPayload | undefined,
+  out: Attachment[] = [],
+): Attachment[] {
+  if (!payload) return out;
+
+  const attachmentId = payload.body?.attachmentId;
+  if (attachmentId) {
+    const disposition = findHeader(payload, 'Content-Disposition') ?? '';
+    const contentId = findHeader(payload, 'Content-ID')?.replace(/^<|>$/g, '');
+    const filename =
+      /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? contentId ?? 'attachment';
+    const mimeType = payload.mimeType ?? 'application/octet-stream';
+
+    out.push({
+      mediaRef: {
+        kind: 'platform-id',
+        value: `${messageId}:${attachmentId}`,
+        mimeType,
+        filename,
+      },
+      filename,
+      mimeType,
+      ...(payload.body?.size ? { size: payload.body.size } : {}),
+      ...(contentId ? { contentId, inline: true } : {}),
+    });
+  }
+
+  for (const part of payload.parts ?? []) collectAttachments(messageId, part, out);
+  return out;
+}
+
+/**
  * Walk the MIME tree preferring `text/plain` anywhere in the tree. If none
  * exists, fall back to `text/html` (tags stripped). Returns null if neither
  * is present.
@@ -481,6 +540,141 @@ function buildReplyEmail(opts: {
   return `${headers.join('\r\n')}\r\n\r\n${opts.body}`;
 }
 
+// ---------- MIME multipart ----------
+
+/**
+ * Marks a reference whose bytes travel inside the reference itself. Gmail has
+ * no upload endpoint, so `uploadMedia` has nowhere to put them server-side.
+ */
+const INLINE_PREFIX = 'inline:';
+
+async function toBytes(
+  data: Uint8Array | Blob | ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  if (data instanceof Uint8Array) return data;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  const reader = (data as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/** Standard base64 (not base64url) with the 76-char line wrapping MIME expects. */
+function b64MimeEncode(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+  return (btoa(binary).match(/.{1,76}/g) ?? []).join('\r\n');
+}
+
+/**
+ * RFC 2047 encoded-word, so non-ASCII filenames survive. Plain ASCII names are
+ * left alone since encoding them would only hurt readability.
+ */
+function encodeFilename(name: string): string {
+  const clean = sanitizeHeaderValue(name).replace(/"/g, '');
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7E]*$/.test(clean)) return `"${clean}"`;
+  return `=?utf-8?B?${b64urlEncode(clean).replace(/-/g, '+').replace(/_/g, '/')}?=`;
+}
+
+/**
+ * Pick a boundary that appears in none of the parts. A collision would let a
+ * part's own bytes terminate the message early, so we regenerate rather than
+ * assume randomness is enough.
+ */
+function makeBoundary(parts: string[]): string {
+  for (;;) {
+    const candidate = `--=_msgly_${randomId().replace(/-/g, '')}`;
+    if (!parts.some((p) => p.includes(candidate))) return candidate;
+  }
+}
+
+interface ResolvedAttachment {
+  filename: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  inline?: boolean;
+  contentId?: string;
+}
+
+/**
+ * Build a multipart RFC 5322 message: the body as the first part, then one
+ * part per file. `multipart/related` when any attachment is inline (so a `cid:`
+ * in an HTML body resolves), `multipart/mixed` otherwise.
+ */
+function buildMultipartEmail(opts: {
+  from: string;
+  to: string;
+  subject: string;
+  body: string;
+  format?: 'plain' | 'markdown' | 'html';
+  inReplyTo?: string;
+  references?: string;
+  attachments: ResolvedAttachment[];
+}): string {
+  const bodyContentType = opts.format === 'html'
+    ? 'text/html; charset=utf-8'
+    : 'text/plain; charset=utf-8';
+
+  const encodedParts = opts.attachments.map((a) => b64MimeEncode(a.bytes));
+  const boundary = makeBoundary([opts.body, ...encodedParts]);
+  const subtype = opts.attachments.some((a) => a.inline ?? a.contentId) ? 'related' : 'mixed';
+
+  const headers = [
+    `From: ${sanitizeHeaderValue(opts.from)}`,
+    `To: ${sanitizeHeaderValue(opts.to)}`,
+    `Subject: ${sanitizeHeaderValue(opts.subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/${subtype}; boundary="${boundary}"`,
+    `Date: ${new Date().toUTCString()}`,
+  ];
+  if (opts.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeaderValue(opts.inReplyTo)}`);
+  if (opts.references) headers.push(`References: ${sanitizeHeaderValue(opts.references)}`);
+
+  const sections = [
+    [
+      `Content-Type: ${bodyContentType}`,
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      opts.body,
+    ].join('\r\n'),
+  ];
+
+  opts.attachments.forEach((a, i) => {
+    const disposition = (a.inline ?? a.contentId) ? 'inline' : 'attachment';
+    const partHeaders = [
+      `Content-Type: ${sanitizeHeaderValue(a.mimeType)}; name=${encodeFilename(a.filename)}`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: ${disposition}; filename=${encodeFilename(a.filename)}`,
+    ];
+    if (a.contentId) {
+      partHeaders.push(`Content-ID: <${sanitizeHeaderValue(a.contentId)}>`);
+    }
+    sections.push([...partHeaders, '', encodedParts[i]!].join('\r\n'));
+  });
+
+  const body = sections
+    .map((s) => `--${boundary}\r\n${s}`)
+    .join('\r\n')
+    .concat(`\r\n--${boundary}--`);
+
+  return `${headers.join('\r\n')}\r\n\r\n${body}`;
+}
+
 /**
  * Length-leak resistant string equality. The length is still observable, but
  * for high-entropy random tokens that doesn't meaningfully leak information.
@@ -535,6 +729,8 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
   const jwksUrl = config.jwksUrl ?? DEFAULT_JWKS_URL;
   const clockSkewSec = config.clockSkewSec ?? DEFAULT_CLOCK_SKEW_SEC;
   const maxMessages = config.maxMessagesPerNotification ?? DEFAULT_MAX_MESSAGES;
+  const attachmentsEnabled = config.attachments?.enabled === true;
+  const capabilities = buildCapabilities(config.attachments);
 
   const tokens = createTokenCache(tokenUrl, config.clientId, config.clientSecret, config.refreshToken);
   const jwks = createJwksCache(jwksUrl, 24 * 60 * 60 * 1000);
@@ -637,7 +833,9 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
 
   function messageToInbound(msg: GmailMessage): InboundMessage | null {
     const text = extractPlainText(msg.payload);
-    if (!text) return null;
+    const attachments = attachmentsEnabled ? collectAttachments(msg.id, msg.payload) : [];
+    // An attachment-only email is still a real message once attachments are on.
+    if (!text && attachments.length === 0) return null;
 
     const from = parseEmailAddress(findHeader(msg.payload, 'From'));
     if (!from) return null;
@@ -670,7 +868,8 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
         channelUserId: from.address,
         ...(from.displayName ? { displayName: from.displayName } : {}),
       },
-      content: { type: 'text', text },
+      content: { type: 'text', text: text ?? '' },
+      ...(attachments.length > 0 ? { attachments } : {}),
       timestamp,
       raw: msg,
       metadata: {
@@ -680,6 +879,84 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
         ...(references ? { references } : {}),
       },
     };
+  }
+
+  function assertAttachmentsEnabled(operation: string): void {
+    if (!attachmentsEnabled) {
+      throw new Error(
+        `Gmail ${operation} requires attachments to be enabled: ` +
+          'createGmailAdapter({ ...cfg, attachments: { enabled: true } })',
+      );
+    }
+  }
+
+  /** Fetch the bytes behind a reference, whichever of the three forms it takes. */
+  async function resolveBytes(ref: MediaReference): Promise<Uint8Array> {
+    if (ref.kind === 'url') {
+      const res = await fetch(ref.value);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch attachment from ${ref.value}: HTTP ${res.status}`);
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    }
+
+    if (ref.value.startsWith(INLINE_PREFIX)) {
+      return b64urlDecodeToBytes(ref.value.slice(INLINE_PREFIX.length));
+    }
+
+    // "<messageId>:<attachmentId>" — Gmail attachment ids are only valid
+    // scoped to their message, so both halves are required.
+    const separator = ref.value.indexOf(':');
+    if (separator === -1) {
+      throw new Error(
+        `Gmail attachment reference must be "<messageId>:<attachmentId>", got "${ref.value}"`,
+      );
+    }
+    const messageId = ref.value.slice(0, separator);
+    const attachmentId = ref.value.slice(separator + 1);
+
+    const res = await authedFetch(
+      `/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+    const data = (await res.json().catch(() => ({}))) as {
+      data?: string;
+      error?: { message?: string };
+    };
+    if (!res.ok || !data.data) {
+      throw new Error(
+        `Gmail attachment download failed: ${data.error?.message ?? `HTTP ${res.status}`}`,
+      );
+    }
+    return b64urlDecodeToBytes(data.data);
+  }
+
+  /** Turn outbound attachments into inlineable parts, enforcing config limits. */
+  async function resolveOutboundAttachments(
+    attachments: Attachment[],
+  ): Promise<ResolvedAttachment[]> {
+    const allowed = config.attachments?.allowedMimeTypes;
+    const maxSize = config.attachments?.maxSizeBytes;
+
+    return Promise.all(
+      attachments.map(async (a) => {
+        if (allowed && !allowed.includes(a.mimeType)) {
+          throw new Error(`Attachment type ${a.mimeType} is not in allowedMimeTypes`);
+        }
+        const bytes = await resolveBytes(a.mediaRef);
+        if (maxSize !== undefined && bytes.length > maxSize) {
+          throw new Error(
+            `Attachment ${a.filename} is ${bytes.length} bytes, over the ${maxSize} byte limit`,
+          );
+        }
+        return {
+          filename: a.filename,
+          mimeType: a.mimeType,
+          bytes,
+          ...(a.inline ? { inline: a.inline } : {}),
+          ...(a.contentId ? { contentId: a.contentId } : {}),
+        };
+      }),
+    );
   }
 
   async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
@@ -775,15 +1052,35 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
         : inReplyTo
       : undefined;
 
-    const raw = buildReplyEmail({
-      from: config.emailAddress,
-      to: message.contact.channelUserId,
-      subject,
-      body: message.content.text,
-      format: message.content.format,
-      inReplyTo,
-      references,
-    });
+    const outbound = message.attachments ?? [];
+    let raw: string;
+    try {
+      const common = {
+        from: config.emailAddress,
+        to: message.contact.channelUserId,
+        subject,
+        body: message.content.text,
+        format: message.content.format,
+        inReplyTo,
+        references,
+      };
+      raw = outbound.length > 0
+        ? buildMultipartEmail({
+            ...common,
+            attachments: await resolveOutboundAttachments(outbound),
+          })
+        : buildReplyEmail(common);
+    } catch (err) {
+      return {
+        messageId: message.id,
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'gmail_attachment_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
 
     const payload: Record<string, unknown> = { raw: b64urlEncode(raw) };
     const threadId = message.metadata?.['threadId'] as string | undefined;
@@ -873,11 +1170,29 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
     }
   }
 
-  async function uploadMedia(_file: MediaFile): Promise<MediaReference> {
-    throw new Error('Gmail uploadMedia is not yet implemented in v1.');
+  /**
+   * Gmail has no upload endpoint — attachment bytes go inline in the MIME body.
+   * So this carries the bytes in the reference itself, to be inlined by `send`.
+   */
+  async function uploadMedia(file: MediaFile): Promise<MediaReference> {
+    assertAttachmentsEnabled('uploadMedia');
+    const bytes = await toBytes(file.data);
+    return {
+      kind: 'platform-id',
+      value: `${INLINE_PREFIX}${b64urlEncode(bytes)}`,
+      mimeType: file.mimeType,
+      ...(file.filename ? { filename: file.filename } : {}),
+    };
   }
-  async function downloadMedia(_ref: MediaReference): Promise<MediaFile> {
-    throw new Error('Gmail downloadMedia is not yet implemented in v1.');
+
+  async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
+    assertAttachmentsEnabled('downloadMedia');
+    const bytes = await resolveBytes(ref);
+    return {
+      data: bytes,
+      mimeType: ref.mimeType ?? 'application/octet-stream',
+      ...(ref.filename ? { filename: ref.filename } : {}),
+    };
   }
 
   return {
@@ -885,7 +1200,7 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
     get historyId() {
       return lastHistoryId;
     },
-    capabilities: CAPABILITIES,
+    capabilities,
     send,
     handleWebhook,
     verifySignature,

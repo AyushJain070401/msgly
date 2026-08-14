@@ -85,6 +85,43 @@ describe('createLineAdapter', () => {
     expect(m.contact.channelUserId).toBe('U-abc');
   });
 
+  it('parses an inbound file message even though LINE cannot send files', async () => {
+    const a = createLineAdapter(config);
+    // Sending files is not a LINE capability, but users can send them to a bot.
+    expect(a.capabilities.media.file).toBe(false);
+
+    const messages = await a.handleWebhook({
+      headers: {},
+      rawBody: encode(''),
+      body: {
+        events: [
+          {
+            type: 'message',
+            timestamp: 1700000000000,
+            replyToken: 'rt-9',
+            source: { type: 'user', userId: 'U-abc' },
+            message: {
+              id: 'msg-file-1',
+              type: 'file',
+              fileName: 'contract.pdf',
+              fileSize: 12345,
+            },
+          },
+        ],
+      },
+      query: {},
+    });
+
+    expect(messages).toHaveLength(1);
+    const content = messages[0]!.content as {
+      type: string;
+      mediaRef: { value: string; filename?: string };
+    };
+    expect(content.type).toBe('file');
+    expect(content.mediaRef.value).toBe('msg-file-1');
+    expect(content.mediaRef.filename).toBe('contract.pdf');
+  });
+
   it('skips non-message events', async () => {
     const a = createLineAdapter(config);
     const messages = await a.handleWebhook({

@@ -6,7 +6,6 @@ import type {
   InboundMessage,
   MediaFile,
   MediaReference,
-  MessageContent,
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
@@ -21,6 +20,16 @@ export interface WeChatConfig {
    * Development → Basic Configuration → Token. Used for signature verification.
    */
   token: string;
+  /**
+   * How many seconds of clock skew to tolerate on the `timestamp` query
+   * parameter. Default: 300 (5 minutes).
+   *
+   * This bounds webhook replay. WeChat's signature does not cover the request
+   * body, so a captured `signature`/`timestamp`/`nonce` triple would otherwise
+   * stay valid forever and could be replayed with an arbitrary body. Set to
+   * `0` to disable the check (not recommended).
+   */
+  maxTimestampSkewSec?: number;
   /** Override for tests. Defaults to https://api.weixin.qq.com. */
   apiBase?: string;
 }
@@ -51,6 +60,9 @@ const WECHAT_API = 'https://api.weixin.qq.com';
 
 const CAPABILITIES: AdapterCapabilities = {
   text: true,
+  // `file: false` is a genuine platform limit, not a gap: WeChat Official
+  // Account messaging has no generic file type in either direction (that is a
+  // WeChat Work feature). Media is limited to image / voice / video.
   media: { image: true, video: true, audio: true, file: false },
   interactive: { buttons: false, quickReplies: true },
   templates: false,
@@ -110,9 +122,44 @@ function sha1Sync(str: string): string {
   return h.map((v) => v!.toString(16).padStart(8, '0')).join('');
 }
 
-function checkWeChatSignature(token: string, timestamp: string, nonce: string, signature: string): boolean {
+/**
+ * Length-leak resistant string equality. The length is still observable, but
+ * for a fixed-width hex digest that leaks nothing useful. Used so response
+ * timing can't be used to recover the expected signature byte by byte.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+const DEFAULT_MAX_TIMESTAMP_SKEW_SEC = 300;
+
+/**
+ * WeChat's signature covers only `token + timestamp + nonce` — it does NOT
+ * bind the request body, so a valid triple authenticates the *sender*, not the
+ * payload. Without a freshness window a single captured triple stays valid
+ * forever and can be replayed with any body an attacker likes, so we bound how
+ * old `timestamp` may be. Set `maxTimestampSkewSec: 0` to opt out.
+ */
+function checkWeChatSignature(
+  token: string,
+  timestamp: string,
+  nonce: string,
+  signature: string,
+  maxSkewSec: number,
+): boolean {
+  if (maxSkewSec > 0) {
+    const sent = Number(timestamp);
+    if (!Number.isFinite(sent)) return false;
+    const ageSec = Math.abs(Math.floor(Date.now() / 1000) - sent);
+    if (ageSec > maxSkewSec) return false;
+  }
   const expected = sha1Sync([token, timestamp, nonce].sort().join(''));
-  return expected === signature;
+  return constantTimeEqual(expected, signature);
 }
 
 /** Extract a value from WeChat's CDATA XML format. */
@@ -125,6 +172,8 @@ function extractXml(xml: string, tag: string): string {
 
 export function createWeChatAdapter(config: WeChatConfig): WeChatAdapter {
   const apiBase = config.apiBase ?? WECHAT_API;
+  const maxTimestampSkewSec =
+    config.maxTimestampSkewSec ?? DEFAULT_MAX_TIMESTAMP_SKEW_SEC;
 
   // Access token cache
   let cachedToken = '';
@@ -384,7 +433,7 @@ export function createWeChatAdapter(config: WeChatConfig): WeChatAdapter {
     const timestamp = req.query['timestamp'] as string | undefined;
     const nonce = req.query['nonce'] as string | undefined;
     if (!sig || !timestamp || !nonce) return false;
-    return checkWeChatSignature(config.token, timestamp, nonce, sig);
+    return checkWeChatSignature(config.token, timestamp, nonce, sig, maxTimestampSkewSec);
   }
 
   function verifyWebhookChallenge(query: WebhookRequest['query']): string | null {
@@ -393,7 +442,9 @@ export function createWeChatAdapter(config: WeChatConfig): WeChatAdapter {
     const nonce = query['nonce'] as string | undefined;
     const echostr = query['echostr'] as string | undefined;
     if (!sig || !timestamp || !nonce || !echostr) return null;
-    return checkWeChatSignature(config.token, timestamp, nonce, sig) ? echostr : null;
+    return checkWeChatSignature(config.token, timestamp, nonce, sig, maxTimestampSkewSec)
+      ? echostr
+      : null;
   }
 
   async function uploadMedia(file: MediaFile): Promise<MediaReference> {

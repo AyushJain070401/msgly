@@ -1,6 +1,8 @@
 import type {
   Adapter,
   AdapterCapabilities,
+  Attachment,
+  AttachmentsConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
@@ -73,6 +75,20 @@ export interface OutlookConfig {
     expiresAt: number;
   }) => void | Promise<void>;
 
+  /**
+   * Opt in to attachment support. Off by default — leave it unset and this
+   * adapter behaves exactly as it always has.
+   *
+   * Graph inlines attachments up to 3 MB; anything larger needs an upload
+   * session, which this adapter does not implement yet and will reject with a
+   * clear error rather than a Graph 413.
+   *
+   * ```ts
+   * createOutlookAdapter({ ...cfg, attachments: { enabled: true } });
+   * ```
+   */
+  attachments?: AttachmentsConfig;
+
   /** Override the OAuth token endpoint. */
   tokenUrl?: string;
   /** Override the Microsoft Graph base. Default: graph.microsoft.com/v1.0. */
@@ -137,14 +153,26 @@ const DEFAULT_TOKEN_URL = (tenant: string) =>
 const DEFAULT_SCOPE = 'Mail.Read Mail.Send offline_access';
 const DEFAULT_EXPIRATION_MIN = 4230; // Graph's maximum for /messages
 
-const CAPABILITIES: AdapterCapabilities = {
-  text: true,
-  media: { image: false, video: false, audio: false, file: false },
-  interactive: { buttons: false, quickReplies: false },
-  templates: false,
-  reactions: false,
-  typing: false,
-};
+/** Graph inlines `fileAttachment` bytes only up to 3 MB. */
+const GRAPH_INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+
+/**
+ * Capabilities depend on config: email can carry any file type, but only once
+ * the developer opts in. Reporting `file: false` when they haven't is what
+ * makes the hub reject attachment sends up front instead of silently dropping
+ * the files.
+ */
+function buildCapabilities(attachments?: AttachmentsConfig): AdapterCapabilities {
+  const on = attachments?.enabled === true;
+  return {
+    text: true,
+    media: { image: on, video: on, audio: on, file: on },
+    interactive: { buttons: false, quickReplies: false },
+    templates: false,
+    reactions: false,
+    typing: false,
+  };
+}
 
 function randomId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
@@ -281,6 +309,18 @@ interface GraphNotificationBody {
   validationTokens?: string[];
 }
 
+interface GraphAttachment {
+  id?: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+  isInline?: boolean;
+  contentId?: string;
+  /** Present on fileAttachment; absent on itemAttachment/referenceAttachment. */
+  contentBytes?: string;
+  '@odata.type'?: string;
+}
+
 interface GraphMessage {
   id: string;
   conversationId?: string;
@@ -288,9 +328,85 @@ interface GraphMessage {
   subject?: string;
   bodyPreview?: string;
   receivedDateTime?: string;
+  hasAttachments?: boolean;
+  attachments?: GraphAttachment[];
   from?: { emailAddress?: { name?: string; address?: string } };
   toRecipients?: Array<{ emailAddress?: { name?: string; address?: string } }>;
   body?: { contentType?: 'text' | 'html'; content?: string };
+}
+
+// ---------- base64 ----------
+
+function bytesToB64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+  return btoa(binary);
+}
+
+function b64ToBytes(input: string): Uint8Array {
+  const binary = atob(input);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Marks a reference whose bytes travel inside the reference itself. Graph takes
+ * attachment bytes inline in the sendMail payload, so there is nothing to
+ * upload ahead of time for files under the 3 MB limit.
+ */
+const INLINE_PREFIX = 'inline:';
+
+async function toBytes(
+  data: Uint8Array | Blob | ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  if (data instanceof Uint8Array) return data;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  const reader = (data as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/** Map Graph's attachment shape into lazy `Attachment` references. */
+function graphAttachmentsToAttachments(
+  messageId: string,
+  attachments: GraphAttachment[] | undefined,
+): Attachment[] {
+  const out: Attachment[] = [];
+  for (const a of attachments ?? []) {
+    if (!a.id) continue;
+    const filename = a.name ?? 'attachment';
+    const mimeType = a.contentType ?? 'application/octet-stream';
+    out.push({
+      mediaRef: {
+        kind: 'platform-id',
+        value: `${messageId}:${a.id}`,
+        mimeType,
+        filename,
+      },
+      filename,
+      mimeType,
+      ...(a.size !== undefined ? { size: a.size } : {}),
+      ...(a.isInline ? { inline: true } : {}),
+      ...(a.contentId ? { contentId: a.contentId } : {}),
+    });
+  }
+  return out;
 }
 
 function stripHtml(html: string): string {
@@ -335,6 +451,8 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
   const tenant = config.tenantId ?? DEFAULT_TENANT;
   const tokenUrl = config.tokenUrl ?? DEFAULT_TOKEN_URL(tenant);
   const graphBase = config.graphBase ?? DEFAULT_GRAPH_BASE;
+  const attachmentsEnabled = config.attachments?.enabled === true;
+  const capabilities = buildCapabilities(config.attachments);
 
   const statePrefix = config.stateKeyPrefix ?? `msgly:outlook:${config.emailAddress}`;
 
@@ -430,14 +548,22 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
   }
 
   async function fetchMessage(messageId: string): Promise<GraphMessage | null> {
-    const res = await authedFetch(`/me/messages/${encodeURIComponent(messageId)}`);
+    // Only pay for the expand when the developer opted in.
+    const query = attachmentsEnabled ? '?$expand=attachments' : '';
+    const res = await authedFetch(
+      `/me/messages/${encodeURIComponent(messageId)}${query}`,
+    );
     if (!res.ok) return null;
     return (await res.json()) as GraphMessage;
   }
 
   function messageToInbound(msg: GraphMessage): InboundMessage | null {
     const text = extractMessageText(msg);
-    if (!text) return null;
+    const attachments = attachmentsEnabled
+      ? graphAttachmentsToAttachments(msg.id, msg.attachments)
+      : [];
+    // An attachment-only email is still a real message once attachments are on.
+    if (!text && attachments.length === 0) return null;
 
     const from = msg.from?.emailAddress;
     if (!from?.address) return null;
@@ -453,7 +579,8 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
         channelUserId: from.address,
         ...(from.name ? { displayName: from.name } : {}),
       },
-      content: { type: 'text', text },
+      content: { type: 'text', text: text ?? '' },
+      ...(attachments.length > 0 ? { attachments } : {}),
       timestamp: msg.receivedDateTime ?? new Date().toISOString(),
       raw: msg,
       metadata: {
@@ -511,6 +638,88 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
     return true;
   }
 
+  function assertAttachmentsEnabled(operation: string): void {
+    if (!attachmentsEnabled) {
+      throw new Error(
+        `Outlook ${operation} requires attachments to be enabled: ` +
+          'createOutlookAdapter({ ...cfg, attachments: { enabled: true } })',
+      );
+    }
+  }
+
+  /** Fetch the bytes behind a reference, whichever of the three forms it takes. */
+  async function resolveBytes(ref: MediaReference): Promise<Uint8Array> {
+    if (ref.kind === 'url') {
+      const res = await fetch(ref.value);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch attachment from ${ref.value}: HTTP ${res.status}`);
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    }
+
+    if (ref.value.startsWith(INLINE_PREFIX)) {
+      return b64ToBytes(ref.value.slice(INLINE_PREFIX.length));
+    }
+
+    // "<messageId>:<attachmentId>" — Graph attachment ids are scoped to their
+    // message, so both halves are required.
+    const separator = ref.value.indexOf(':');
+    if (separator === -1) {
+      throw new Error(
+        `Outlook attachment reference must be "<messageId>:<attachmentId>", got "${ref.value}"`,
+      );
+    }
+    const messageId = ref.value.slice(0, separator);
+    const attachmentId = ref.value.slice(separator + 1);
+
+    const res = await authedFetch(
+      `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+    const data = (await res.json().catch(() => ({}))) as GraphAttachment & {
+      error?: { message?: string };
+    };
+    if (!res.ok || data.contentBytes === undefined) {
+      throw new Error(
+        `Outlook attachment download failed: ${data.error?.message ?? `HTTP ${res.status}`}`,
+      );
+    }
+    return b64ToBytes(data.contentBytes);
+  }
+
+  /** Turn outbound attachments into Graph fileAttachment objects. */
+  async function buildGraphAttachments(
+    attachments: Attachment[],
+  ): Promise<Record<string, unknown>[]> {
+    if (attachments.length === 0) return [];
+    assertAttachmentsEnabled('sending attachments');
+
+    const allowed = config.attachments?.allowedMimeTypes;
+    const maxSize = config.attachments?.maxSizeBytes ?? GRAPH_INLINE_ATTACHMENT_LIMIT;
+
+    return Promise.all(
+      attachments.map(async (a) => {
+        if (allowed && !allowed.includes(a.mimeType)) {
+          throw new Error(`Attachment type ${a.mimeType} is not in allowedMimeTypes`);
+        }
+        const bytes = await resolveBytes(a.mediaRef);
+        if (bytes.length > maxSize) {
+          throw new Error(
+            `Attachment ${a.filename} is ${bytes.length} bytes, over the ${maxSize} byte limit. ` +
+              'Microsoft Graph requires an upload session above 3 MB, which this adapter does not support yet.',
+          );
+        }
+        return {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: a.filename,
+          contentType: a.mimeType,
+          contentBytes: bytesToB64(bytes),
+          ...(a.inline ?? a.contentId ? { isInline: true } : {}),
+          ...(a.contentId ? { contentId: a.contentId } : {}),
+        };
+      }),
+    );
+  }
+
   async function send(message: OutboundMessage): Promise<DeliveryReceipt> {
     if (message.content.type !== 'text') {
       return {
@@ -526,15 +735,35 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
 
     const replyTo = message.metadata?.['messageId'] as string | undefined;
 
+    let graphAttachments: Record<string, unknown>[];
+    try {
+      graphAttachments = await buildGraphAttachments(message.attachments ?? []);
+    } catch (err) {
+      return {
+        messageId: message.id,
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'outlook_attachment_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+    const hasAttachments = graphAttachments.length > 0;
+
     let res: Response;
     if (replyTo) {
       // Threaded reply — Graph adds proper In-Reply-To/References headers on
-      // its own and keeps the conversation linked.
+      // its own and keeps the conversation linked. Attachments ride in the
+      // `message` sub-object; `comment` alone cannot carry them.
       res = await authedFetch(
         `/me/messages/${encodeURIComponent(replyTo)}/reply`,
         {
           method: 'POST',
-          body: JSON.stringify({ comment: message.content.text }),
+          body: JSON.stringify({
+            comment: message.content.text,
+            ...(hasAttachments ? { message: { attachments: graphAttachments } } : {}),
+          }),
         },
       );
     } else {
@@ -552,6 +781,7 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
             toRecipients: [
               { emailAddress: { address: message.contact.channelUserId } },
             ],
+            ...(hasAttachments ? { attachments: graphAttachments } : {}),
           },
           saveToSentItems: true,
         }),
@@ -649,16 +879,34 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
     }
   }
 
-  async function uploadMedia(_file: MediaFile): Promise<MediaReference> {
-    throw new Error('Outlook uploadMedia is not yet implemented in v1.');
+  /**
+   * Graph takes attachment bytes inline in the sendMail payload, so there is
+   * no upload step — this carries the bytes in the reference for `send`.
+   */
+  async function uploadMedia(file: MediaFile): Promise<MediaReference> {
+    assertAttachmentsEnabled('uploadMedia');
+    const bytes = await toBytes(file.data);
+    return {
+      kind: 'platform-id',
+      value: `${INLINE_PREFIX}${bytesToB64(bytes)}`,
+      mimeType: file.mimeType,
+      ...(file.filename ? { filename: file.filename } : {}),
+    };
   }
-  async function downloadMedia(_ref: MediaReference): Promise<MediaFile> {
-    throw new Error('Outlook downloadMedia is not yet implemented in v1.');
+
+  async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
+    assertAttachmentsEnabled('downloadMedia');
+    const bytes = await resolveBytes(ref);
+    return {
+      data: bytes,
+      mimeType: ref.mimeType ?? 'application/octet-stream',
+      ...(ref.filename ? { filename: ref.filename } : {}),
+    };
   }
 
   return {
     channel: 'outlook',
-    capabilities: CAPABILITIES,
+    capabilities,
     send,
     handleWebhook,
     verifySignature,

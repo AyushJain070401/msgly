@@ -345,6 +345,214 @@ describe('createGmailAdapter', () => {
     }
   });
 
+  it('surfaces inbound attachments as lazy references only when enabled', async () => {
+    const payload = {
+      id: 'msg-7',
+      payload: {
+        mimeType: 'multipart/mixed',
+        headers: [
+          { name: 'From', value: 'bob@example.com' },
+          { name: 'Subject', value: 'here you go' },
+        ],
+        parts: [
+          { mimeType: 'text/plain', body: { data: strToB64url('see attached') } },
+          {
+            mimeType: 'application/pdf',
+            headers: [
+              { name: 'Content-Disposition', value: 'attachment; filename="deck.pdf"' },
+            ],
+            body: { attachmentId: 'att-77', size: 2048 },
+          },
+        ],
+      },
+    };
+
+    const mockFetch = () =>
+      vi.fn().mockImplementation(async (url: string) => {
+        if (url === baseConfig.tokenUrl) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+          } as Response;
+        }
+        if (url.includes('/gmail/v1/users/me/messages?')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ messages: [{ id: 'msg-7' }] }),
+          } as Response;
+        }
+        return { ok: true, status: 200, json: async () => payload } as Response;
+      }) as unknown as typeof fetch;
+
+    const req = {
+      headers: {},
+      rawBody: encode(''),
+      body: {
+        message: {
+          data: strToB64url(
+            JSON.stringify({ emailAddress: 'agent@acme.com', historyId: '99999' }),
+          ),
+        },
+      },
+      query: {},
+    };
+
+    globalThis.fetch = mockFetch();
+    const on = createGmailAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const [withAttachments] = await on.handleWebhook(req);
+    expect(withAttachments!.attachments).toHaveLength(1);
+    const att = withAttachments!.attachments![0]!;
+    expect(att.filename).toBe('deck.pdf');
+    expect(att.mimeType).toBe('application/pdf');
+    expect(att.size).toBe(2048);
+    // Lazy: the reference is present, the bytes were never fetched.
+    expect(att.mediaRef).toEqual({
+      kind: 'platform-id',
+      value: 'msg-7:att-77',
+      mimeType: 'application/pdf',
+      filename: 'deck.pdf',
+    });
+
+    globalThis.fetch = mockFetch();
+    const off = createGmailAdapter(baseConfig);
+    const [plain] = await off.handleWebhook(req);
+    expect(plain!.attachments).toBeUndefined();
+    expect((plain!.content as { text: string }).text).toBe('see attached');
+  });
+
+  it('reports no media capability until attachments are enabled', () => {
+    expect(createGmailAdapter(baseConfig).capabilities.media.file).toBe(false);
+    const on = createGmailAdapter({ ...baseConfig, attachments: { enabled: true } });
+    expect(on.capabilities.media.file).toBe(true);
+    expect(on.capabilities.media.image).toBe(true);
+  });
+
+  it('sends a multipart email with an attachment when enabled', async () => {
+    let capturedSendBody: Record<string, unknown> | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      capturedSendBody = JSON.parse((init?.body as string) ?? '{}');
+      return { ok: true, status: 200, json: async () => ({ id: 'sent-1' }) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createGmailAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const ref = await a.uploadMedia({
+      data: encode('PDF-BYTES'),
+      mimeType: 'application/pdf',
+      filename: 'invoice.pdf',
+    });
+
+    const receipt = await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'gmail',
+      account: { channel: 'gmail', channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'gmail', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'invoice attached' },
+      attachments: [
+        { mediaRef: ref, filename: 'invoice.pdf', mimeType: 'application/pdf' },
+      ],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(receipt.status).toBe('sent');
+    const decoded = atob((capturedSendBody?.raw as string).replace(/-/g, '+').replace(/_/g, '/'));
+    expect(decoded).toContain('Content-Type: multipart/mixed; boundary=');
+    expect(decoded).toContain('Content-Disposition: attachment; filename="invoice.pdf"');
+    expect(decoded).toContain('Content-Transfer-Encoding: base64');
+    expect(decoded).toContain('invoice attached');
+    expect(decoded).toContain(btoa('PDF-BYTES'));
+
+    // The boundary must actually delimit, and be closed.
+    const boundary = /boundary="([^"]+)"/.exec(decoded)![1]!;
+    expect(decoded).toContain(`--${boundary}--`);
+    expect(decoded.split(`--${boundary}`).length).toBe(4); // 2 parts + preamble + closer
+  });
+
+  it('rejects an attachment over maxSizeBytes before calling the API', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+    }) as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const a = createGmailAdapter({
+      ...baseConfig,
+      attachments: { enabled: true, maxSizeBytes: 4 },
+    });
+    const ref = await a.uploadMedia({
+      data: encode('way too many bytes'),
+      mimeType: 'text/plain',
+      filename: 'big.txt',
+    });
+
+    const receipt = await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'gmail',
+      account: { channel: 'gmail', channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'gmail', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'here' },
+      attachments: [{ mediaRef: ref, filename: 'big.txt', mimeType: 'text/plain' }],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('gmail_attachment_error');
+    expect(receipt.error?.message).toContain('over the 4 byte limit');
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/messages/send'),
+      expect.anything(),
+    );
+  });
+
+  it('uploadMedia refuses to work while attachments are disabled', async () => {
+    const a = createGmailAdapter(baseConfig);
+    await expect(
+      a.uploadMedia({ data: encode('x'), mimeType: 'text/plain' }),
+    ).rejects.toThrow('attachments: { enabled: true }');
+  });
+
+  it('downloadMedia fetches bytes for a "<messageId>:<attachmentId>" reference', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      capturedUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: strToB64url('REPORT') }),
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createGmailAdapter({ ...baseConfig, attachments: { enabled: true } });
+    const file = await a.downloadMedia({
+      kind: 'platform-id',
+      value: 'msg-9:att-3',
+      mimeType: 'text/csv',
+      filename: 'report.csv',
+    });
+
+    expect(capturedUrl).toContain('/messages/msg-9/attachments/att-3');
+    expect(new TextDecoder().decode(file.data as Uint8Array)).toBe('REPORT');
+    expect(file.filename).toBe('report.csv');
+  });
+
   it('verifyCredentials returns hint when refreshToken is empty', async () => {
     const a = createGmailAdapter({ ...baseConfig, refreshToken: '' });
     const result = await a.verifyCredentials();

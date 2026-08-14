@@ -1,5 +1,11 @@
 import type { Adapter, CredentialsCheckResult, WebhookRequest } from './adapter.js';
 import {
+  type BulkResult,
+  type BulkSendOptions,
+  createBulkRunner,
+  resolveRateLimit,
+} from './campaign.js';
+import {
   adapterAlreadyRegistered,
   adapterNotRegistered,
   invalidSignature,
@@ -14,6 +20,7 @@ import type {
   DeliveryReceipt,
   InboundMessage,
   OutboundMessage,
+  RateLimit,
 } from './types.js';
 
 // ---------- Logger ----------
@@ -106,6 +113,12 @@ export interface HubOptions {
   store?: MessageStore;
   logger?: Logger;
   retry?: Partial<RetryOptions>;
+  /**
+   * Per-channel send-rate overrides for `sendBulk`, merged over the built-in
+   * `CHANNEL_RATE_LIMITS` defaults. Set this once when you know your account's
+   * real ceiling (a raised WhatsApp tier, a Twilio short code).
+   */
+  rateLimits?: Partial<Record<ChannelName, RateLimit>>;
 }
 
 export interface Hub {
@@ -123,6 +136,26 @@ export interface Hub {
     message: Omit<OutboundMessage, 'id' | 'direction' | 'timestamp'> &
       Partial<Pick<OutboundMessage, 'id' | 'timestamp'>>,
   ): Promise<DeliveryReceipt>;
+
+  /**
+   * Fan one message out to many contacts, paced to the channel's rate limit.
+   *
+   * Resolves rather than rejecting when individual recipients fail — one bad
+   * phone number must not abort a 10,000-person campaign. Check
+   * `result.failures` for what went wrong. It throws only for whole-run
+   * mistakes caught up front: an unregistered channel, or content the channel
+   * cannot send.
+   *
+   * Each recipient goes through the same path as `send()`, so `'delivery'` and
+   * `'error'` fire per recipient exactly as they normally do. Note the volume:
+   * a large campaign with a meaningful failure rate emits a lot of `'error'`
+   * events, so an alerting `on('error')` handler needs to expect that.
+   *
+   * Aborting via `options.signal` resolves with `cancelled: true` and partial
+   * results rather than rejecting. In-flight sends are not interrupted, so a
+   * message already handed to the platform is never reported as cancelled.
+   */
+  sendBulk(options: BulkSendOptions): Promise<BulkResult>;
 
   /** Subscribe to a hub event. Returns an unsubscribe function. */
   on<K extends keyof HubEventMap>(event: K, handler: HubEventMap[K]): () => void;
@@ -205,7 +238,11 @@ export function createHub(options: HubOptions = {}): Hub {
     return adapter;
   }
 
-  function assertSupported(adapter: Adapter, contentType: string): void {
+  function assertSupported(
+    adapter: Adapter,
+    contentType: string,
+    hasAttachments = false,
+  ): void {
     const c = adapter.capabilities;
     const supported: Record<string, boolean> = {
       text: c.text,
@@ -220,7 +257,41 @@ export function createHub(options: HubOptions = {}): Hub {
     if (!supported[contentType]) {
       throw unsupportedFeature(adapter.channel, contentType);
     }
+    if (hasAttachments && !c.media.file) {
+      throw unsupportedFeature(adapter.channel, 'attachments');
+    }
   }
+
+  const hubRateLimits = options.rateLimits;
+
+  const bulkRunner = createBulkRunner({
+    async sendOne(recipient, content, options) {
+      const adapter = getAdapter(options.channel);
+      // Per-recipient check: with a content resolver the type can vary, so an
+      // unsupported result fails that recipient instead of the whole run.
+      assertSupported(adapter, content.type);
+      return hub.send({
+        channel: options.channel,
+        account: recipient.account ?? options.account,
+        contact: recipient.contact,
+        content,
+        ...(options.metadata || recipient.metadata
+          ? { metadata: { ...options.metadata, ...recipient.metadata } }
+          : {}),
+      });
+    },
+    resolveLimit(options) {
+      return resolveRateLimit(
+        options.channel,
+        options.rateLimit === false ? undefined : options.rateLimit,
+        adapters.get(options.channel)?.rateLimit,
+        hubRateLimits,
+      );
+    },
+    onProgressError(err) {
+      logger.warn({ err }, 'sendBulk onProgress callback threw');
+    },
+  });
 
   const hub: Hub = {
     register(adapter) {
@@ -240,7 +311,11 @@ export function createHub(options: HubOptions = {}): Hub {
 
     async send(message) {
       const adapter = getAdapter(message.channel);
-      assertSupported(adapter, message.content.type);
+      assertSupported(
+        adapter,
+        message.content.type,
+        (message.attachments?.length ?? 0) > 0,
+      );
 
       const fullMessage: OutboundMessage = {
         ...message,
@@ -282,6 +357,16 @@ export function createHub(options: HubOptions = {}): Hub {
         emitter.emit('error', err, { messageId: fullMessage.id });
         throw err;
       }
+    },
+
+    async sendBulk(options) {
+      // Pre-flight: fail the whole run for mistakes that would fail for every
+      // recipient anyway, so nobody discovers them 9,000 messages in.
+      const adapter = getAdapter(options.channel);
+      if (typeof options.content !== 'function') {
+        assertSupported(adapter, options.content.type);
+      }
+      return bulkRunner(options);
     },
 
     on(event, handler) {

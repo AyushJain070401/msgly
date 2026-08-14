@@ -79,7 +79,7 @@ const DEFAULT_CLOCK_SKEW_SEC = 300;
 
 const CAPABILITIES: AdapterCapabilities = {
   text: true,
-  media: { image: true, video: false, audio: false, file: true },
+  media: { image: true, video: true, audio: true, file: true },
   interactive: { buttons: true, quickReplies: false },
   templates: false,
   reactions: false,
@@ -363,11 +363,19 @@ function toTeamsOutbound(content: MessageContent): Record<string, unknown> {
       };
 
     case 'image':
+    case 'video':
+    case 'audio':
     case 'file': {
+      // Bot Framework attachments are content-type agnostic — every media kind
+      // rides the same shape, differing only in the fallback MIME type.
+      const fallbackMime: Record<string, string> = {
+        image: 'image/*',
+        video: 'video/*',
+        audio: 'audio/*',
+        file: 'application/octet-stream',
+      };
       const att: TeamsAttachment = {
-        contentType:
-          content.mediaRef.mimeType ??
-          (content.type === 'image' ? 'image/*' : 'application/octet-stream'),
+        contentType: content.mediaRef.mimeType ?? fallbackMime[content.type]!,
         contentUrl: content.mediaRef.value,
         name: content.caption,
       };

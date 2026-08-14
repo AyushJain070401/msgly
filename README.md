@@ -252,7 +252,7 @@ Keys are auto-namespaced per adapter and email (e.g. `msgly:gmail:agent@co.com:h
 
 ### Capability checks
 
-The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle:
+The hub validates every send against the target channel's capabilities and throws `UnsupportedFeatureError` if you try to send something a channel can't handle. This covers attachments too — a message with `attachments` on a channel that hasn't enabled them is rejected up front rather than silently sent without the files:
 
 ```typescript
 import { isMsglyError } from '@msgly/core';
@@ -273,6 +273,121 @@ try {
 ### Platform limits enforced
 
 LINE quick-replies, Messenger quick-replies, and WhatsApp interactive buttons all have platform-specific maxes on count and label length. The adapters silently truncate to fit instead of failing with cryptic API errors.
+
+## Attachments
+
+Attachments ride alongside a message's `content` rather than replacing it — which is what an email actually is: a body plus N files.
+
+**Attachments are opt-in per channel.** Enable them on the adapters you want them on; every other channel behaves exactly as before.
+
+```typescript
+const gmail = createGmailAdapter({
+  ...cfg,
+  attachments: { enabled: true, maxSizeBytes: 25 * 1024 * 1024 },
+});
+```
+
+Until you opt in, the adapter reports `capabilities.media.file === false`, so `hub.send()` throws `UnsupportedFeature` rather than quietly dropping your files.
+
+### Sending
+
+```typescript
+const ref = await gmail.uploadMedia({
+  data: await readFile('invoice.pdf'),   // Uint8Array | Blob | ReadableStream
+  mimeType: 'application/pdf',
+  filename: 'invoice.pdf',
+});
+
+await hub.send({
+  channel: 'gmail',
+  account: { channel: 'gmail', channelAccountId: 'agent@acme.com' },
+  contact: { channel: 'gmail', channelUserId: 'alice@example.com' },
+  content: { type: 'text', text: 'Invoice attached.' },
+  attachments: [
+    { mediaRef: ref, filename: 'invoice.pdf', mimeType: 'application/pdf' },
+  ],
+});
+```
+
+For images embedded in an HTML body, set `contentId` and reference it as `cid:` in the HTML.
+
+### Receiving
+
+Inbound attachments are **lazy** — you get metadata and a reference, not bytes. Nothing is downloaded until you ask, so a 25 MB attachment your app ignores costs you nothing.
+
+```typescript
+hub.on('message', async (msg) => {
+  for (const att of msg.attachments ?? []) {
+    console.log(att.filename, att.mimeType, att.size);   // no network call yet
+
+    const file = await hub.getAdapter(msg.channel).downloadMedia(att.mediaRef);
+    await writeFile(att.filename, file.data);            // now it downloads
+  }
+});
+```
+
+| Channel | Send | Receive | Notes |
+| --- | --- | --- | --- |
+| Gmail | ✅ | ✅ | Built as MIME multipart; inline `cid:` images supported |
+| Outlook | ✅ | ✅ | Files over 3 MB need a Graph upload session — not supported yet, rejected with a clear error |
+| Teams | ✅ | ✅ | Via `content: { type: 'file' }` — Bot Framework attachments, no opt-in needed |
+| LINE | ❌ | ✅ | The Messaging API has no file message type to send; inbound user files are parsed and downloadable |
+| WeChat | ❌ | ❌ | Official Account messaging has no file type in either direction (that's WeChat Work) |
+
+Other channels carry files through `content: { type: 'file', mediaRef }` as they always have — the `attachments` array is for channels where files accompany a body, which today means email.
+
+## Campaigns — sending to many contacts
+
+`hub.sendBulk()` fans one message out to a contact list, paced to the channel's rate limit so you don't get throttled.
+
+```typescript
+const result = await hub.sendBulk({
+  channel: 'whatsapp',
+  account: { channel: 'whatsapp', channelAccountId: process.env.WA_PHONE_ID! },
+  recipients: customers.map((c) => ({
+    contact: { channel: 'whatsapp', channelUserId: c.phone },
+    metadata: { crmId: c.id },
+  })),
+  // A function, so every recipient gets their own template variables:
+  content: (r) => ({
+    type: 'template',
+    templateName: 'order_update',
+    language: 'en_US',
+    variables: { '1': nameFor(r.contact), '2': orderFor(r.contact) },
+  }),
+  concurrency: 8,
+  onProgress: (p) => console.log(`${p.completed}/${p.total}`),
+  signal: AbortSignal.timeout(60_000),
+});
+
+console.log(`sent ${result.sent}, failed ${result.failed}`);
+for (const f of result.failures) {
+  console.error(f.contact.channelUserId, f.error.message);
+}
+```
+
+**One bad recipient never aborts the campaign.** `sendBulk` resolves rather than rejecting when individual sends fail — inspect `result.failures`. It throws only for mistakes that would fail for everyone: an unregistered channel, or content the channel can't send. Those are caught before the first message goes out.
+
+`result.results` is always in input order and always the same length as `recipients`, so you can zip it back against your own list.
+
+### Rate limits
+
+Each channel has a conservative built-in default (Slack 1/s, Twilio long code 1/s, Gmail ~2/s, Discord 5/s, Telegram 25/s, WhatsApp 60/s). Resolution order, highest priority first:
+
+1. `sendBulk({ rateLimit: { perSecond: 200 } })` — per call
+2. `adapter.rateLimit` — when an adapter knows its own account tier
+3. `createHub({ rateLimits: { whatsapp: { perSecond: 500 } } })` — process-wide
+4. The built-in `CHANNEL_RATE_LIMITS` default
+
+Pass `rateLimit: false` to disable pacing entirely if you already have your own queue in front of msgly.
+
+Buckets are per call, so two campaigns running at once on the same channel each get the full rate. Stagger them if that matters.
+
+### Things to know
+
+- **Cancelling resolves, it doesn't reject.** Aborting via `signal` gives you `cancelled: true` plus partial results — throwing them away would defeat the purpose. Sends already in flight are not interrupted, so a message that actually went out is never reported as cancelled.
+- **`onProgress` fires in completion order**, while `results` is in input order.
+- **Watch your `error` listener.** Every recipient goes through the same path as `send()`, so a 10,000-recipient campaign with a 30% failure rate emits 3,000 `'error'` events. If your `hub.on('error')` pages on-call, filter it before running a campaign.
 
 ## Sending a WhatsApp template (outside the 24h window)
 

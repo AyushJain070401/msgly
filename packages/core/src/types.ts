@@ -3,7 +3,8 @@
  * payloads into these shapes. This is the lingua franca of the library.
  */
 
-export type ChannelName =
+/** Channels shipped in this repo. */
+export type KnownChannel =
   | 'telegram'
   | 'whatsapp'
   | 'messenger'
@@ -15,8 +16,19 @@ export type ChannelName =
   | 'outlook'
   | 'slack'
   | 'wechat'
+  | 'smtp'
   | 'twilio-sms'
   | 'twilio-voice';
+
+/**
+ * A channel identifier. Open by design: `(string & {})` keeps autocomplete for
+ * the built-ins above while letting anyone publish a third-party adapter for a
+ * channel this repo doesn't ship, with no change to core.
+ */
+// `string & {}` is the standard idiom for "any string, but keep autocomplete
+// for the union members". Widening to plain `string` would lose the hints.
+// eslint-disable-next-line @typescript-eslint/ban-types
+export type ChannelName = KnownChannel | (string & {});
 
 export type MessageDirection = 'inbound' | 'outbound';
 
@@ -119,6 +131,63 @@ export interface MediaReference {
   kind: 'platform-id' | 'url';
   value: string;
   mimeType?: string;
+  /** Original filename, when the platform reports one. */
+  filename?: string;
+}
+
+// ---------- Attachments ----------
+
+/**
+ * A file attached to a message, alongside (not instead of) its content.
+ *
+ * This is separate from `MediaContent` because a media message *is* the file,
+ * while an attachment rides along with a body — which is what email actually
+ * is: a text or HTML body plus N files.
+ *
+ * Inbound attachments are lazy: adapters populate the metadata and a
+ * `mediaRef`, and you call `adapter.downloadMedia(ref)` when you want bytes.
+ * Fetching them eagerly would burn API quota and memory on attachments most
+ * apps never read.
+ */
+export interface Attachment {
+  mediaRef: MediaReference;
+  filename: string;
+  mimeType: string;
+  /** Size in bytes, when the platform reports it. */
+  size?: number;
+  /** True for images embedded in an HTML body rather than listed as downloads. */
+  inline?: boolean;
+  /** Content-ID for `cid:` references from an HTML body. Implies `inline`. */
+  contentId?: string;
+}
+
+/**
+ * Per-channel attachment opt-in. Adapters that support attachments accept this
+ * in their config; when it is absent or `enabled: false` the adapter behaves
+ * exactly as it did before attachments existed — its capabilities report no
+ * file support, so the hub rejects attachment sends instead of dropping them,
+ * and inbound attachment parsing is skipped entirely.
+ */
+export interface AttachmentsConfig {
+  enabled: boolean;
+  /** Reject outbound attachments larger than this before calling the platform. */
+  maxSizeBytes?: number;
+  /** When set, only these MIME types are accepted outbound. */
+  allowedMimeTypes?: string[];
+}
+
+// ---------- Rate limits ----------
+
+/**
+ * A send-rate ceiling. Lives here rather than in `campaign.ts` because both
+ * `adapter.ts` and `campaign.ts` reference it, and routing it through
+ * `campaign.ts` would create an import cycle.
+ */
+export interface RateLimit {
+  /** Sustained sends per second. */
+  perSecond: number;
+  /** Max instantaneous burst. Defaults to `ceil(perSecond)`. */
+  burst?: number;
 }
 
 export interface MediaFile {
@@ -143,6 +212,12 @@ interface BaseMessage {
   account: AccountRef;
   contact: ContactRef;
   content: MessageContent;
+  /**
+   * Files riding along with `content`. Adapters only honour this when the
+   * channel has attachments enabled in its config — otherwise the hub throws
+   * `UnsupportedFeature` rather than dropping the files silently.
+   */
+  attachments?: Attachment[];
   /** ISO 8601 timestamp. */
   timestamp: string;
   /** Free-form metadata for the developer to attach. */

@@ -44,6 +44,9 @@ const LINE_DATA_API = 'https://api-data.line.me';
 
 const CAPABILITIES: AdapterCapabilities = {
   text: true,
+  // `file: false` is a genuine platform limit, not a gap: the LINE Messaging
+  // API has no file message type to send. Inbound file messages from users are
+  // still parsed and downloadable.
   media: { image: true, video: true, audio: true, file: false },
   interactive: { buttons: true, quickReplies: true },
   templates: false,
@@ -201,6 +204,18 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
         return { type: 'video', mediaRef: { kind: 'platform-id', value: msg.id } };
       case 'audio':
         return { type: 'audio', mediaRef: { kind: 'platform-id', value: msg.id } };
+      case 'file':
+        // Users can send files to a LINE bot even though the Messaging API has
+        // no file message type to send back — so this is receive-only.
+        return {
+          type: 'file',
+          mediaRef: {
+            kind: 'platform-id',
+            value: msg.id,
+            ...(msg.fileName ? { filename: msg.fileName } : {}),
+          },
+          ...(msg.fileName ? { caption: msg.fileName } : {}),
+        };
       case 'location':
         return msg.latitude !== undefined && msg.longitude !== undefined
           ? {
@@ -310,8 +325,9 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
       throw new Error(`LINE downloadMedia failed: ${res.status}`);
     }
     const data = new Uint8Array(await res.arrayBuffer());
-    const mimeType = res.headers.get('content-type') ?? 'application/octet-stream';
-    return { data, mimeType };
+    const mimeType =
+      ref.mimeType ?? res.headers.get('content-type') ?? 'application/octet-stream';
+    return { data, mimeType, ...(ref.filename ? { filename: ref.filename } : {}) };
   }
 
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
@@ -405,4 +421,7 @@ interface LineMessage {
   longitude?: number;
   title?: string;
   address?: string;
+  /** Present on inbound `file` messages. */
+  fileName?: string;
+  fileSize?: number;
 }

@@ -6,6 +6,7 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  RateLimit,
 } from './types.js';
 
 /**
@@ -72,6 +73,14 @@ export type CredentialsCheckResult =
 export interface Adapter {
   readonly channel: ChannelName;
   readonly capabilities: AdapterCapabilities;
+
+  /**
+   * This account's real send-rate ceiling, when the adapter knows it — a
+   * raised WhatsApp messaging tier, a Twilio short code. Overrides the core's
+   * per-channel default in `sendBulk`. Optional: omit it and the default
+   * applies.
+   */
+  readonly rateLimit?: RateLimit;
 
   /** Send an outbound message to the platform. */
   send(message: OutboundMessage): Promise<DeliveryReceipt>;

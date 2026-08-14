@@ -7,7 +7,6 @@ import type {
   InteractiveButton,
   MediaFile,
   MediaReference,
-  MessageContent,
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';

@@ -119,6 +119,51 @@ describe('createMsTeamsAdapter', () => {
     expect(receipt.error?.code).toBe('msteams_missing_service_url');
   });
 
+  it('sends video and audio as Bot Framework attachments', async () => {
+    for (const [type, expectedMime] of [
+      ['video', 'video/*'],
+      ['audio', 'audio/*'],
+    ] as const) {
+      let sentBody: Record<string, unknown> | undefined;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === baseConfig.tokenUrl) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+          } as Response;
+        }
+        sentBody = JSON.parse((init?.body as string) ?? '{}');
+        return { ok: true, status: 200, json: async () => ({ id: 'act-1' }) } as Response;
+      }) as unknown as typeof fetch;
+
+      const a = createMsTeamsAdapter(baseConfig);
+      expect(a.capabilities.media[type]).toBe(true);
+
+      const receipt = await a.send({
+        id: `m-${type}`,
+        direction: 'outbound',
+        channel: 'msteams',
+        account: { channel: 'msteams', channelAccountId: '28:bot' },
+        contact: { channel: 'msteams', channelUserId: 'a:conv' },
+        content: {
+          type,
+          mediaRef: { kind: 'url', value: `https://cdn.test/clip.${type}` },
+        },
+        timestamp: new Date().toISOString(),
+        metadata: { serviceUrl: 'https://smba.test/amer/' },
+      });
+
+      expect(receipt.status).toBe('sent');
+      const attachments = sentBody?.attachments as Record<string, unknown>[];
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0]).toMatchObject({
+        contentType: expectedMime,
+        contentUrl: `https://cdn.test/clip.${type}`,
+      });
+    }
+  });
+
   it('verifyCredentials returns hint when appPassword is empty', async () => {
     const a = createMsTeamsAdapter({ ...baseConfig, appPassword: '' });
     const result = await a.verifyCredentials();

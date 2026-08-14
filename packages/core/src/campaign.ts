@@ -55,6 +55,10 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   plivo: { perSecond: 5, burst: 10 },
   // Resend's default API limit is 2 requests/s, raisable on request.
   resend: { perSecond: 2, burst: 2 },
+  // Telnyx allows high throughput; the per-number MPS is the real constraint.
+  telnyx: { perSecond: 10, burst: 20 },
+  // SendGrid's v3 API is generous — the plan's daily quota binds first.
+  sendgrid: { perSecond: 25, burst: 50 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

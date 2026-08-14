@@ -22,6 +22,8 @@ export type KnownChannel =
   | 'msg91'
   | 'plivo'
   | 'resend'
+  | 'telnyx'
+  | 'sendgrid'
   | 'twilio-sms'
   | 'twilio-voice';
 

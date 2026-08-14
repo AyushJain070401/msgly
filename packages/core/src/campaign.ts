@@ -51,6 +51,10 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   // MSG91 meters per account; DLT-registered headers are throttled by the
   // operator downstream regardless of what the API accepts.
   msg91: { perSecond: 20, burst: 40 },
+  // Plivo's documented default is 5 messages/s per account on long codes.
+  plivo: { perSecond: 5, burst: 10 },
+  // Resend's default API limit is 2 requests/s, raisable on request.
+  resend: { perSecond: 2, burst: 2 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

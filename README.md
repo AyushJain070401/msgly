@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, Slack, WeChat, Twilio SMS, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Twilio SMS, Exotel, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -9,24 +9,47 @@
 
 Building a chatbot or notification system that works across multiple channels means learning many different APIs, webhook formats, and media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.
 
-## Status
+## Supported channels
 
-| Channel         | Package               | Status     |
-| --------------- | --------------------- | ---------- |
-| Telegram        | `@msgly/telegram`     | Implemented |
-| LINE            | `@msgly/line`         | Implemented |
-| Messenger       | `@msgly/messenger`    | Implemented |
-| Instagram       | `@msgly/instagram`    | Implemented (+ Instagram Login OAuth) |
-| WhatsApp        | `@msgly/whatsapp`     | Implemented (full Business API) |
-| Discord         | `@msgly/discord`      | Implemented (HTTP Interactions) |
-| Microsoft Teams | `@msgly/msteams`      | Implemented (Bot Framework) |
-| Slack           | `@msgly/slack`        | Implemented (Events API + Block Kit) |
-| WeChat          | `@msgly/wechat`       | Implemented (Official Account) |
-| Gmail           | `@msgly/gmail`        | Implemented (Pub/Sub push, text-only v1) |
-| Outlook / M365  | `@msgly/outlook`      | Implemented (Graph notifications, text-only v1) |
-| Twilio SMS      | `@msgly/twilio-sms`   | Implemented (SMS + MMS images) |
-| Twilio Voice    | `@msgly/twilio-voice` | Implemented (TwiML, Gather, outbound calls) |
-| Core engine     | `@msgly/core`         | Implemented |
+### Chat & social
+
+| Channel         | Package            | Notes |
+| --------------- | ------------------ | ----- |
+| Telegram        | `@msgly/telegram`  | Bot API, inline keyboards, reactions |
+| WhatsApp        | `@msgly/whatsapp`  | Full Cloud Business API, templates |
+| Messenger       | `@msgly/messenger` | Meta Send API |
+| Instagram       | `@msgly/instagram` | + Instagram Login OAuth |
+| LINE            | `@msgly/line`      | Messaging API, quick replies |
+| Discord         | `@msgly/discord`   | HTTP Interactions, components |
+| Microsoft Teams | `@msgly/msteams`   | Bot Framework, Adaptive Cards |
+| Slack           | `@msgly/slack`     | Events API + Block Kit |
+| WeChat          | `@msgly/wechat`    | Official Account |
+
+### Email
+
+| Channel        | Package          | Notes |
+| -------------- | ---------------- | ----- |
+| Gmail          | `@msgly/gmail`   | Pub/Sub push, MIME attachments |
+| Outlook / M365 | `@msgly/outlook` | Graph notifications, attachments |
+| **SMTP / IMAP** | `@msgly/smtp`   | **Yahoo, Zoho, Fastmail, iCloud, AOL, or any custom mail server.** Node-only |
+
+### SMS & voice
+
+| Channel      | Package               | Notes |
+| ------------ | --------------------- | ----- |
+| Twilio SMS   | `@msgly/twilio-sms`   | SMS + MMS images |
+| **Exotel**   | `@msgly/exotel`       | **India-focused SMS with DLT compliance** |
+| Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
+
+### Core
+
+| Package | Notes |
+| ------- | ----- |
+| `@msgly/core` | Hub, adapter contract, retries, storage, campaigns |
+
+Channel names are open — `ChannelName` accepts any string, so you can publish a
+third-party adapter for a channel this repo doesn't ship without waiting on a
+core release. Built-in names keep editor autocomplete.
 
 ## 60-second quickstart
 

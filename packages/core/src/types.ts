@@ -17,6 +17,8 @@ export type KnownChannel =
   | 'slack'
   | 'wechat'
   | 'smtp'
+  | 'exotel'
+  | 'vonage-sms'
   | 'twilio-sms'
   | 'twilio-voice';
 

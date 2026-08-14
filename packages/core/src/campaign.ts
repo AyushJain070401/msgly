@@ -43,6 +43,11 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   // chat.postMessage is ~1/s per channel, with short bursts tolerated.
   slack: { perSecond: 1, burst: 5 },
   wechat: { perSecond: 10, burst: 10 },
+  // Exotel meters per account; the documented default throughput for SMS is
+  // modest and DLT-registered headers are throttled by the operator too.
+  exotel: { perSecond: 5, burst: 10 },
+  // Vonage's default account throughput is 30 SMS/s, raisable on request.
+  'vonage-sms': { perSecond: 25, burst: 30 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

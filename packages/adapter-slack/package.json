@@ -1,6 +1,6 @@
 {
   "name": "@msgly/slack",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Slack Events API adapter for Msgly",
   "license": "MIT",
   "type": "module",

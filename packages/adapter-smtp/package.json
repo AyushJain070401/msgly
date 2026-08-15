@@ -1,6 +1,6 @@
 {
   "name": "@msgly/smtp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SMTP + IMAP adapter for Msgly — works with Yahoo, Zoho, Fastmail, or any custom mail server",
   "license": "MIT",
   "type": "module",

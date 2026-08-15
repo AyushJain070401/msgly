@@ -1,6 +1,6 @@
 {
   "name": "@msgly/rocketchat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Rocket.Chat adapter for Msgly — self-hosted team chat via REST + outgoing webhooks",
   "license": "MIT",
   "type": "module",

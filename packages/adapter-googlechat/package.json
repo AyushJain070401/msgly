@@ -1,6 +1,6 @@
 {
   "name": "@msgly/googlechat",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Google Chat adapter for Msgly — service-account auth with verified Google-signed webhooks",
   "license": "MIT",
   "type": "module",

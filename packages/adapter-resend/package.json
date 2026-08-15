@@ -1,6 +1,6 @@
 {
   "name": "@msgly/resend",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Resend email adapter for Msgly — transactional email over HTTP, Edge-compatible",
   "license": "MIT",
   "type": "module",

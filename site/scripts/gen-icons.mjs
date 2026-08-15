@@ -28,6 +28,7 @@ const FROM_SIMPLE_ICONS = {
   '@msgly/resend': 'resend',
   '@msgly/vonage-sms': 'vonage',
   '@msgly/fcm': 'firebase',
+  '@msgly/reddit': 'reddit',
 };
 
 const slugToExport = (s) => 'si' + s[0].toUpperCase() + s.slice(1);

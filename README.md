@@ -3,7 +3,10 @@
 > Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
+[![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**🌐 Website: [ayushjain070401.github.io/msgly](https://ayushjain070401.github.io/msgly/)** — browse every channel, the quickstart and the API in one place. Source lives in [`site/`](site/).
 
 ## Why
 

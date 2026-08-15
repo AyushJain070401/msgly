@@ -2,6 +2,8 @@
 
 > Discord HTTP Interactions adapter for [Msgly](https://github.com/AyushJain070401/msgly). Receive slash commands and button clicks, send replies through the unified hub. **Zero classes, works in Node 20.13+, Bun, Deno, Cloudflare Workers, and Edge runtimes.**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Install
 
 ```bash

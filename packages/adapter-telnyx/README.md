@@ -1,5 +1,7 @@
 # @msgly/telnyx
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Telnyx SMS/MMS adapter for [Msgly](https://github.com/AyushJain070401/msgly), with **Ed25519** webhook verification.
 
 ```bash

@@ -1,5 +1,7 @@
 # @msgly/exotel
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Exotel SMS adapter for [Msgly](https://github.com/AyushJain070401/msgly) — built for the Indian market, with DLT compliance.
 
 ```bash

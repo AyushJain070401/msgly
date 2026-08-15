@@ -1,5 +1,7 @@
 # @msgly/ses
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Amazon SES adapter for [Msgly](https://github.com/AyushJain070401/msgly) — built for high-volume campaign email.
 
 SES is roughly **10× cheaper** than most transactional providers at scale ($0.10 per 1,000 emails), which is the economics that matter when you send to a list. Edge-compatible: SigV4 signing is implemented on Web Crypto, so there's no AWS SDK dependency.

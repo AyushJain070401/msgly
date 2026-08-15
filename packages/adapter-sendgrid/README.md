@@ -1,5 +1,7 @@
 # @msgly/sendgrid
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 [SendGrid](https://sendgrid.com) adapter for [Msgly](https://github.com/AyushJain070401/msgly) — transactional email over HTTP, so it's Edge-compatible.
 
 ```bash

@@ -1,5 +1,7 @@
 # @msgly/msg91
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 MSG91 SMS adapter for [Msgly](https://github.com/AyushJain070401/msgly) — India SMS via the DLT Flow API.
 
 ```bash

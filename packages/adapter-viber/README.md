@@ -1,5 +1,7 @@
 # @msgly/viber
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Viber Business Messages adapter for [Msgly](https://github.com/AyushJain070401/msgly) — rich media, keyboards, and HMAC-signed webhooks.
 
 ```bash

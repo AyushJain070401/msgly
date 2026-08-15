@@ -1,5 +1,7 @@
 # @msgly/rocketchat
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 [Rocket.Chat](https://rocket.chat) adapter for [Msgly](https://github.com/AyushJain070401/msgly) — self-hosted team chat.
 
 ```bash

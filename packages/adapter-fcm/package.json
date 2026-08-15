@@ -1,7 +1,7 @@
 {
   "name": "@msgly/fcm",
   "version": "1.1.0",
-  "description": "Firebase Cloud Messaging adapter for Msgly \u2014 push notifications for Android, iOS and web",
+  "description": "Firebase Cloud Messaging adapter for Msgly — push notifications for Android, iOS and web",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",

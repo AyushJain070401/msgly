@@ -1,5 +1,7 @@
 # @msgly/mattermost
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 [Mattermost](https://mattermost.com) adapter for [Msgly](https://github.com/AyushJain070401/msgly) — self-hosted team chat.
 
 ```bash

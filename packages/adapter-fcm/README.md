@@ -1,5 +1,7 @@
 # @msgly/fcm
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Firebase Cloud Messaging adapter for [Msgly](https://github.com/AyushJain070401/msgly) — push notifications for Android, iOS and web.
 
 ```bash

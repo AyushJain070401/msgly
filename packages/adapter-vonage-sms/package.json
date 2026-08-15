@@ -1,7 +1,7 @@
 {
   "name": "@msgly/vonage-sms",
   "version": "1.1.0",
-  "description": "Vonage (Nexmo) SMS adapter for Msgly \u2014 global SMS with signed webhooks",
+  "description": "Vonage (Nexmo) SMS adapter for Msgly — global SMS with signed webhooks",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",

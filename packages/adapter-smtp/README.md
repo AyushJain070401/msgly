@@ -4,6 +4,8 @@ SMTP + IMAP adapter for [Msgly](https://github.com/AyushJain070401/msgly). Works
 
 > **Node-only.** Unlike the other msgly adapters, this one cannot run on Edge runtimes or in a browser: SMTP and IMAP are raw TCP/TLS protocols that `fetch` cannot speak. It depends on [`nodemailer`](https://nodemailer.com) and [`imapflow`](https://imapflow.com).
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ```bash
 npm install @msgly/core @msgly/smtp
 ```

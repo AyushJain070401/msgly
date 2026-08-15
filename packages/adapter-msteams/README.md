@@ -205,7 +205,7 @@ await hub.send({
 
 ## Runtime requirements
 
-JWT verification (RS256) uses WebCrypto, native in Node 18+, Bun, Deno, Cloudflare Workers, and modern browsers. OAuth2 token requests use `fetch`, also native everywhere.
+JWT verification (RS256) uses WebCrypto, native in Node 20+, Bun, Deno, Cloudflare Workers, and modern browsers. OAuth2 token requests use `fetch`, also native everywhere.
 
 ## Production security notes
 

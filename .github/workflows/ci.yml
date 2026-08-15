@@ -17,8 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 18 is the floor the packages declare; 20 and 22 are what people run.
-        node-version: [18, 20, 22]
+        # 20 is the floor: Node 18 has no global `crypto`, which 17 of the
+        # adapters need for webhook signature verification.
+        node-version: [20, 22, 24]
 
     steps:
       - uses: actions/checkout@v4

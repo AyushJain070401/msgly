@@ -28,7 +28,7 @@ The adapter also enforces a timestamp window (default 5 minutes,
 `webhookToleranceSec`) so a captured request can't be replayed forever.
 
 If the runtime's Web Crypto lacks Ed25519, verification **fails closed** rather
-than silently accepting unverified webhooks. Node 18.4+ and modern Edge runtimes
+than silently accepting unverified webhooks. Node 20+ and modern Edge runtimes
 support it.
 
 Leaving `publicKey` unset makes `verifySignature` return `true` for everything.

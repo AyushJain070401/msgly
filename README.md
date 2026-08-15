@@ -121,7 +121,7 @@ core release. Built-in names keep editor autocomplete.
 
 If you've never used this library before, do this first. It uses Telegram (the easiest channel — no business verification, no Meta App, no Pages) to get you to "it works" before introducing anything complex.
 
-**What you need:** Node.js 18 or newer, and a Telegram account.
+**What you need:** Node.js 20 or newer, and a Telegram account.
 
 **1. Get the code and install:**
 

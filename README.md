@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Twilio SMS, Exotel, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,6 +24,10 @@ Building a chatbot or notification system that works across multiple channels me
 | Microsoft Teams | `@msgly/msteams`   | Bot Framework, Adaptive Cards |
 | Slack           | `@msgly/slack`     | Events API + Block Kit |
 | WeChat          | `@msgly/wechat`    | Official Account |
+| **Viber**       | `@msgly/viber`     | **Business Messages, keyboards, signed webhooks** |
+| **Mattermost**  | `@msgly/mattermost` | **Self-hosted team chat, REST + outgoing webhooks** |
+| **Rocket.Chat** | `@msgly/rocketchat` | **Self-hosted team chat, REST + outgoing webhooks** |
+| **Google Chat** | `@msgly/googlechat` | **Service-account auth, Google-signed webhook verification** |
 
 ### Email
 
@@ -32,6 +36,8 @@ Building a chatbot or notification system that works across multiple channels me
 | Gmail          | `@msgly/gmail`   | Pub/Sub push, MIME attachments |
 | Outlook / M365 | `@msgly/outlook` | Graph notifications, attachments |
 | **SMTP / IMAP** | `@msgly/smtp`   | **Yahoo, Zoho, Fastmail, iCloud, AOL, or any custom mail server.** Node-only |
+| **Resend**     | `@msgly/resend`  | **Transactional email over HTTP, Edge-compatible** |
+| **SendGrid**   | `@msgly/sendgrid` | **Inbound Parse + ECDSA-signed event webhook, Edge-compatible** |
 
 ### SMS & voice
 
@@ -39,6 +45,10 @@ Building a chatbot or notification system that works across multiple channels me
 | ------------ | --------------------- | ----- |
 | Twilio SMS   | `@msgly/twilio-sms`   | SMS + MMS images |
 | **Exotel**   | `@msgly/exotel`       | **India-focused SMS with DLT compliance** |
+| **MSG91**    | `@msgly/msg91`        | **India SMS via the DLT Flow API, template-first** |
+| **Vonage**   | `@msgly/vonage-sms`   | **Global SMS, signed webhooks** |
+| **Plivo**    | `@msgly/plivo`        | **Global SMS + MMS, V3 signature verification** |
+| **Telnyx**   | `@msgly/telnyx`       | **Global SMS + MMS, Ed25519-signed webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
 
 ### Core
@@ -46,6 +56,62 @@ Building a chatbot or notification system that works across multiple channels me
 | Package | Notes |
 | ------- | ----- |
 | `@msgly/core` | Hub, adapter contract, retries, storage, campaigns |
+
+### Which channels suit campaigns
+
+| Tier | Channels | Notes |
+| --- | --- | --- |
+| **Built for outbound** | SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx | Email and SMS. Honour opt-outs — see below |
+| **Policy-gated** | WhatsApp, Messenger, Instagram | Need approved templates or a 24h window |
+| **Reply-only** | Telegram, Viber, LINE, WeChat | The user must contact you first; no cold outreach |
+| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person |
+
+LinkedIn, X/Twitter DM, and iMessage have **no usable API** for this — LinkedIn's
+messaging API is partner-gated, and automating the web UI violates their terms
+and gets accounts banned.
+
+### Opt-outs are not optional
+
+`sendBulk` consults a `SuppressionStore` before every send. Honouring opt-outs is
+required by TCPA and TRAI/DLT (SMS) and CAN-SPAM and GDPR (email):
+
+```typescript
+import { createHub, createInMemorySuppressionStore, applyConsentIntent } from '@msgly/core';
+
+const suppression = createInMemorySuppressionStore();  // use a KV store in production
+const hub = createHub({ suppressionStore: suppression });
+
+// Capture STOP / UNSUBSCRIBE replies automatically
+hub.on('message', (msg) => applyConsentIntent(msg, suppression));
+
+const result = await hub.sendBulk({ /* ... */ });
+console.log(result.sent, result.skipped);  // skipped = opted out
+```
+
+Suppressed recipients come back as `skipped`, never `failed`, and cost no rate
+limit. If the store is unreachable the send is **skipped rather than sent** —
+not sending is the recoverable mistake.
+
+Hard bounces and spam complaints suppress automatically, so the list cleans
+itself:
+
+```typescript
+import { applyDeliveryReceipt } from '@msgly/core';
+
+hub.on('delivery', (receipt) => applyDeliveryReceipt(receipt, 'resend', suppression));
+```
+
+Only **permanent** failures suppress. A deferral, a full mailbox, or a
+temporary block is left alone — and when an adapter cannot tell, nothing is
+suppressed, because wrongly dropping a deliverable address is worse than a
+wasted retry.
+
+Email adapters also emit `List-Unsubscribe` headers, which Gmail and Yahoo have
+required from bulk senders since February 2024:
+
+```typescript
+createResendAdapter({ ...cfg, unsubscribe: { url: 'https://acme.com/u?e={{contact}}' } });
+```
 
 Channel names are open — `ChannelName` accepts any string, so you can publish a
 third-party adapter for a channel this repo doesn't ship without waiting on a
@@ -55,12 +121,12 @@ core release. Built-in names keep editor autocomplete.
 
 If you've never used this library before, do this first. It uses Telegram (the easiest channel — no business verification, no Meta App, no Pages) to get you to "it works" before introducing anything complex.
 
-**What you need:** Node.js 18 or newer, and a Telegram account.
+**What you need:** Node.js 20 or newer, and a Telegram account.
 
 **1. Get the code and install:**
 
 ```bash
-unzip msgly.zip
+git clone https://github.com/AyushJain070401/msgly.git
 cd msgly
 pnpm install
 pnpm build

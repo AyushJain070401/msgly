@@ -563,3 +563,93 @@ describe('createGmailAdapter', () => {
     }
   });
 });
+
+describe('List-Unsubscribe', () => {
+  function mockSend() {
+    const captured: { body?: Record<string, unknown> } = {};
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/token')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      captured.body = JSON.parse((init?.body as string) ?? '{}');
+      return { ok: true, status: 200, json: async () => ({ id: 'sent-1' }) } as Response;
+    }) as unknown as typeof fetch;
+    return captured;
+  }
+
+  const decode = (raw: string) => atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
+
+  function outbound(extra: Record<string, unknown> = {}) {
+    return {
+      id: 'm-1',
+      direction: 'outbound' as const,
+      channel: 'gmail' as const,
+      account: { channel: 'gmail' as const, channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'gmail' as const, channelUserId: 'alice@example.com' },
+      content: { type: 'text' as const, text: 'campaign' },
+      timestamp: new Date().toISOString(),
+      ...extra,
+    };
+  }
+
+  it('adds one-click headers to the MIME message', async () => {
+    const captured = mockSend();
+    const a = createGmailAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/u?e={{contact}}', mailto: 'unsub@acme.com' },
+    });
+    await a.send(outbound());
+
+    const decoded = decode(captured.body!.raw as string);
+    expect(decoded).toContain(
+      'List-Unsubscribe: <mailto:unsub@acme.com>, <https://acme.com/u?e=alice%40example.com>',
+    );
+    expect(decoded).toContain('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
+  });
+
+  it('adds the headers to the multipart builder too', async () => {
+    const captured = mockSend();
+    const a = createGmailAdapter({
+      ...baseConfig,
+      attachments: { enabled: true },
+      unsubscribe: { url: 'https://acme.com/u' },
+    });
+    const ref = await a.uploadMedia({
+      data: encode('PDF'),
+      mimeType: 'application/pdf',
+      filename: 'a.pdf',
+    });
+    await a.send(
+      outbound({
+        attachments: [{ mediaRef: ref, filename: 'a.pdf', mimeType: 'application/pdf' }],
+      }),
+    );
+
+    const decoded = decode(captured.body!.raw as string);
+    expect(decoded).toContain('List-Unsubscribe: <https://acme.com/u>');
+    expect(decoded).toContain('multipart/mixed');
+  });
+
+  it('omits the headers when not configured', async () => {
+    const captured = mockSend();
+    const a = createGmailAdapter(baseConfig);
+    await a.send(outbound());
+    expect(decode(captured.body!.raw as string)).not.toContain('List-Unsubscribe');
+  });
+
+  it('strips CRLF so an unsubscribe URL cannot inject headers', async () => {
+    const captured = mockSend();
+    const a = createGmailAdapter(baseConfig);
+    await a.send(
+      outbound({ metadata: { unsubscribeUrl: 'https://acme.com/u\r\nBcc: evil@x.com' } }),
+    );
+
+    const decoded = decode(captured.body!.raw as string);
+    expect(decoded).not.toContain('Bcc: evil@x.com\r\n');
+    expect(decoded).toContain('List-Unsubscribe: <https://acme.com/uBcc: evil@x.com>');
+  });
+});

@@ -2,11 +2,11 @@
   "name": "msgly",
   "version": "1.0.0",
   "private": true,
-  "description": "Open-source unified messaging library for WhatsApp, Instagram, Messenger, Telegram, and LINE",
+  "description": "Open-source unified messaging library — one API for chat, email, SMS and voice across WhatsApp, Telegram, Slack, Teams, Discord, LINE, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Gmail, Outlook, SMTP/IMAP, Resend, SendGrid, Twilio, Exotel, MSG91, Vonage, Plivo and Telnyx",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "turbo run build",

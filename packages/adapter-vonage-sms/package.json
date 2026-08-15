@@ -1,6 +1,6 @@
 {
   "name": "@msgly/vonage-sms",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Vonage (Nexmo) SMS adapter for Msgly — global SMS with signed webhooks",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
@@ -48,5 +49,8 @@
     "nexmo",
     "sms",
     "messaging"
-  ]
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

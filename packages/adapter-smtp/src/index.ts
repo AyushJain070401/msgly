@@ -11,8 +11,10 @@ import type {
   MediaReference,
   OutboundMessage,
   StateStore,
+  UnsubscribeConfig,
   WebhookRequest,
 } from '@msgly/core';
+import { buildUnsubscribeHeaders } from '@msgly/core';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
@@ -70,6 +72,13 @@ export interface SmtpConfig {
    * adapters — see the msgly README.
    */
   attachments?: AttachmentsConfig;
+
+  /**
+   * One-click unsubscribe details. Gmail and Yahoo require these headers from
+   * bulk senders — without them, campaign mail is throttled or spam-foldered.
+   * Per-message `metadata.unsubscribeUrl` overrides this.
+   */
+  unsubscribe?: UnsubscribeConfig;
 
   /**
    * Persist the IMAP cursor (last seen UID) so a restart resumes where it left
@@ -453,6 +462,17 @@ export function createSmtpAdapter(config: SmtpConfig): SmtpAdapter {
 
     const isHtml = message.content.format === 'html';
 
+    // Header values are sanitized, so a URL carrying CRLF cannot inject headers.
+    const unsubscribeHeaders = Object.fromEntries(
+      Object.entries(
+        buildUnsubscribeHeaders(
+          message.metadata,
+          config.unsubscribe,
+          message.contact.channelUserId,
+        ),
+      ).map(([k, v]) => [k, sanitizeHeaderValue(v)]),
+    );
+
     try {
       const attachments = await buildNodemailerAttachments(message.attachments ?? []);
       const info = (await getTransporter().sendMail({
@@ -473,6 +493,9 @@ export function createSmtpAdapter(config: SmtpConfig): SmtpAdapter {
             }
           : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(Object.keys(unsubscribeHeaders).length > 0
+          ? { headers: unsubscribeHeaders }
+          : {}),
       })) as { messageId?: string; rejected?: unknown[] };
 
       if (info.rejected && info.rejected.length > 0) {

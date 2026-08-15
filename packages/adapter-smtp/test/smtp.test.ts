@@ -618,3 +618,63 @@ describe('collectAttachmentsFromBodyStructure', () => {
     expect(found[0]!.filename).toBe('from-name-param.bin');
   });
 });
+
+describe('List-Unsubscribe', () => {
+  it('emits one-click headers from adapter config', async () => {
+    const { config, sent } = baseConfig({
+      unsubscribe: { url: 'https://acme.com/u?e={{contact}}', mailto: 'unsub@acme.com' },
+    });
+    const a = createSmtpAdapter(config as never);
+
+    await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'smtp',
+      account: { channel: 'smtp', channelAccountId: 'agent@yahoo.com' },
+      contact: { channel: 'smtp', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'campaign' },
+      timestamp: new Date().toISOString(),
+    });
+
+    const headers = sent[0]!.headers as Record<string, string>;
+    expect(headers['List-Unsubscribe']).toBe(
+      '<mailto:unsub@acme.com>, <https://acme.com/u?e=alice%40example.com>',
+    );
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+  });
+
+  it('strips CRLF from unsubscribe headers too', async () => {
+    const { config, sent } = baseConfig({
+      unsubscribe: { mailto: 'unsub@acme.com\r\nBcc: evil@x.com' },
+    });
+    const a = createSmtpAdapter(config as never);
+
+    await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'smtp',
+      account: { channel: 'smtp', channelAccountId: 'agent@yahoo.com' },
+      contact: { channel: 'smtp', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'x' },
+      timestamp: new Date().toISOString(),
+    });
+
+    const headers = sent[0]!.headers as Record<string, string>;
+    expect(String(headers['List-Unsubscribe'])).not.toMatch(/[\r\n]/);
+  });
+
+  it('omits the headers when not configured', async () => {
+    const { config, sent } = baseConfig();
+    const a = createSmtpAdapter(config as never);
+    await a.send({
+      id: 'm-1',
+      direction: 'outbound',
+      channel: 'smtp',
+      account: { channel: 'smtp', channelAccountId: 'agent@yahoo.com' },
+      contact: { channel: 'smtp', channelUserId: 'alice@example.com' },
+      content: { type: 'text', text: 'hi' },
+      timestamp: new Date().toISOString(),
+    });
+    expect(sent[0]!.headers).toBeUndefined();
+  });
+});

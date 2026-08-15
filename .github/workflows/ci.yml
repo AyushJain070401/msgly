@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run redundant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor: Node 18 has no global `crypto`, which 17 of the
+        # adapters need for webhook signature verification.
+        node-version: [20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from `packageManager` in package.json — pinning it here
+      # too makes the action fail with ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+  # Publishing 26 packages part-way through is painful to unwind, so verify
+  # the tarballs actually pack before a release is ever attempted.
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from `packageManager` in package.json — pinning it here
+      # too makes the action fail with ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Verify every package packs with dist, README and LICENSE
+        run: |
+          set -euo pipefail
+          for dir in packages/*/; do
+            name=$(node -p "require('./$dir/package.json').name")
+            echo "→ $name"
+            files=$(cd "$dir" && npm pack --dry-run --json | node -e \
+              "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+                 const f=JSON.parse(s)[0].files.map(x=>x.path);
+                 console.log(f.join('\n'));
+               })")
+            for required in LICENSE README.md; do
+              echo "$files" | grep -qx "$required" \
+                || { echo "::error::$name is missing $required from its tarball"; exit 1; }
+            done
+            echo "$files" | grep -q '^dist/' \
+              || { echo "::error::$name ships no dist/"; exit 1; }
+          done

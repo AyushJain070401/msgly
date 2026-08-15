@@ -1,6 +1,6 @@
 {
   "name": "@msgly/smtp",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "SMTP + IMAP adapter for Msgly — works with Yahoo, Zoho, Fastmail, or any custom mail server",
   "license": "MIT",
   "type": "module",
@@ -16,10 +16,11 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

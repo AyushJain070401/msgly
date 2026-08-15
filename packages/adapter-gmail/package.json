@@ -1,6 +1,6 @@
 {
   "name": "@msgly/gmail",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Gmail adapter for Msgly — receive and reply to emails via Gmail API + Pub/Sub push",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
@@ -51,5 +52,8 @@
     "agent",
     "messaging",
     "webhook"
-  ]
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

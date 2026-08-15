@@ -1,4 +1,5 @@
 import type { MsglyError } from './errors.js';
+import type { SuppressionStore } from './suppression.js';
 import type {
   AccountRef,
   ChannelName,
@@ -48,6 +49,25 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   exotel: { perSecond: 5, burst: 10 },
   // Vonage's default account throughput is 30 SMS/s, raisable on request.
   'vonage-sms': { perSecond: 25, burst: 30 },
+  // MSG91 meters per account; DLT-registered headers are throttled by the
+  // operator downstream regardless of what the API accepts.
+  msg91: { perSecond: 20, burst: 40 },
+  // Plivo's documented default is 5 messages/s per account on long codes.
+  plivo: { perSecond: 5, burst: 10 },
+  // Resend's default API limit is 2 requests/s, raisable on request.
+  resend: { perSecond: 2, burst: 2 },
+  // Telnyx allows high throughput; the per-number MPS is the real constraint.
+  telnyx: { perSecond: 10, burst: 20 },
+  // SendGrid's v3 API is generous — the plan's daily quota binds first.
+  sendgrid: { perSecond: 25, burst: 50 },
+  // Viber's public account send limit is generous but broadcast-metered.
+  viber: { perSecond: 20, burst: 40 },
+  // Mattermost is self-hosted; the default rate limit is 10 req/s per server.
+  mattermost: { perSecond: 8, burst: 10 },
+  // Rocket.Chat is self-hosted; its default REST rate limit is modest.
+  rocketchat: { perSecond: 8, burst: 10 },
+  // Google Chat allows ~60 write requests/min per space.
+  googlechat: { perSecond: 1, burst: 3 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },
@@ -174,7 +194,18 @@ export type BulkItemResult =
       error: MsglyError | Error;
       receipt?: DeliveryReceipt;
     }
-  | { status: 'cancelled'; index: number; contact: ContactRef };
+  | { status: 'cancelled'; index: number; contact: ContactRef }
+  | {
+      /**
+       * Deliberately not sent. Today this means the contact is in the
+       * suppression store — they opted out. Distinct from `failed`, because
+       * nothing went wrong and retrying would be a compliance violation.
+       */
+      status: 'skipped';
+      index: number;
+      contact: ContactRef;
+      reason: 'suppressed';
+    };
 
 export interface BulkProgress {
   /** The recipient that just settled. */
@@ -184,18 +215,23 @@ export interface BulkProgress {
   sent: number;
   failed: number;
   cancelled: number;
+  skipped: number;
 }
 
 export interface BulkResult {
   total: number;
   sent: number;
   failed: number;
+  /** Recipients skipped because they had opted out. */
+  skipped: number;
   /** True when the run was aborted before every recipient was attempted. */
   cancelled: boolean;
   /** In input order — always the same length as `recipients`. */
   results: BulkItemResult[];
   /** The failed entries, same objects as in `results`. */
   failures: Extract<BulkItemResult, { status: 'failed' }>[];
+  /** The suppressed entries, same objects as in `results`. */
+  suppressed: Extract<BulkItemResult, { status: 'skipped' }>[];
   durationMs: number;
 }
 
@@ -214,6 +250,14 @@ export interface BulkSendOptions {
   onProgress?: (progress: BulkProgress) => void;
   /** Abort the run. Recipients not yet started are reported as cancelled. */
   signal?: AbortSignal;
+  /**
+   * Skip recipients who have opted out, reporting them as `skipped`.
+   *
+   * Defaults to the hub's `suppressionStore` when one is configured. Pass
+   * `false` to bypass the check — only appropriate for genuinely
+   * transactional sends (an OTP, a receipt), never for marketing.
+   */
+  suppression?: SuppressionStore | false;
 }
 
 // ---------- Runner ----------
@@ -226,6 +270,8 @@ export interface BulkRunnerDeps {
   ): Promise<DeliveryReceipt>;
   resolveLimit(options: BulkSendOptions): RateLimit;
   onProgressError(err: unknown): void;
+  /** Store used when `options.suppression` is not given. */
+  defaultSuppression?: SuppressionStore | undefined;
 }
 
 export function createBulkRunner(deps: BulkRunnerDeps) {
@@ -238,18 +284,26 @@ export function createBulkRunner(deps: BulkRunnerDeps) {
     let sent = 0;
     let failed = 0;
     let cancelled = 0;
+    let skipped = 0;
 
     if (total === 0) {
       return {
         total: 0,
         sent: 0,
         failed: 0,
+        skipped: 0,
         cancelled: false,
         results: [],
         failures: [],
+        suppressed: [],
         durationMs: Date.now() - started,
       };
     }
+
+    const suppression =
+      options.suppression === false
+        ? null
+        : (options.suppression ?? deps.defaultSuppression ?? null);
 
     const limit = deps.resolveLimit(options);
     const limiter =
@@ -268,17 +322,19 @@ export function createBulkRunner(deps: BulkRunnerDeps) {
       results[result.index] = result;
       if (result.status === 'sent') sent++;
       else if (result.status === 'failed') failed++;
+      else if (result.status === 'skipped') skipped++;
       else cancelled++;
 
       if (!options.onProgress) return;
       try {
         options.onProgress({
           result,
-          completed: sent + failed + cancelled,
+          completed: sent + failed + cancelled + skipped,
           total,
           sent,
           failed,
           cancelled,
+          skipped,
         });
       } catch (err) {
         // A broken progress callback must never take the campaign down.
@@ -296,6 +352,41 @@ export function createBulkRunner(deps: BulkRunnerDeps) {
         if (signal?.aborted) {
           settle({ status: 'cancelled', index, contact: recipient.contact });
           continue;
+        }
+
+        // Checked before taking a rate-limit token: a suppressed recipient
+        // costs no throughput, and never reaches the adapter.
+        if (suppression) {
+          let blocked = false;
+          try {
+            blocked = await suppression.isSuppressed(
+              recipient.contact.channel,
+              recipient.contact.channelUserId,
+            );
+          } catch (err) {
+            // Fail closed. If we cannot tell whether someone opted out, not
+            // sending is the recoverable mistake; sending is not.
+            settle({
+              status: 'failed',
+              index,
+              contact: recipient.contact,
+              error: new Error(
+                `Suppression check failed, so the send was skipped: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            });
+            continue;
+          }
+          if (blocked) {
+            settle({
+              status: 'skipped',
+              index,
+              contact: recipient.contact,
+              reason: 'suppressed',
+            });
+            continue;
+          }
         }
 
         try {
@@ -328,10 +419,14 @@ export function createBulkRunner(deps: BulkRunnerDeps) {
       total,
       sent,
       failed,
+      skipped,
       cancelled: cancelled > 0,
       results,
       failures: results.filter(
         (r): r is Extract<BulkItemResult, { status: 'failed' }> => r.status === 'failed',
+      ),
+      suppressed: results.filter(
+        (r): r is Extract<BulkItemResult, { status: 'skipped' }> => r.status === 'skipped',
       ),
       durationMs: Date.now() - started,
     };

@@ -136,6 +136,25 @@ importers:
         specifier: ^1.4.0
         version: 1.6.1(@types/node@20.19.40)
 
+  packages/adapter-googlechat:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
   packages/adapter-instagram:
     dependencies:
       '@msgly/core':
@@ -174,7 +193,45 @@ importers:
         specifier: ^1.4.0
         version: 1.6.1(@types/node@20.19.40)
 
+  packages/adapter-mattermost:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
   packages/adapter-messenger:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-msg91:
     dependencies:
       '@msgly/core':
         specifier: workspace:*
@@ -213,6 +270,82 @@ importers:
         version: 1.6.1(@types/node@20.19.40)
 
   packages/adapter-outlook:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-plivo:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-resend:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-rocketchat:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-sendgrid:
     dependencies:
       '@msgly/core':
         specifier: workspace:*
@@ -297,6 +430,25 @@ importers:
         specifier: ^1.4.0
         version: 1.6.1(@types/node@20.19.40)
 
+  packages/adapter-telnyx:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
   packages/adapter-twilio-sms:
     dependencies:
       '@msgly/core':
@@ -317,6 +469,25 @@ importers:
         version: 1.6.1(@types/node@20.19.40)
 
   packages/adapter-twilio-voice:
+    dependencies:
+      '@msgly/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@20.19.40)
+
+  packages/adapter-viber:
     dependencies:
       '@msgly/core':
         specifier: workspace:*

@@ -1,6 +1,6 @@
 # @msgly/core
 
-> Core engine for Msgly — unified message model, the `createHub` factory, retry, idempotency, capability checks, and the `Adapter` contract every channel package implements. **Zero classes, runs in Node 18+, Next.js (Node + Edge), and the browser.**
+> Core engine for Msgly — unified message model, the `createHub` factory, retry, idempotency, capability checks, and the `Adapter` contract every channel package implements. **Zero classes, runs in Node 20+, Next.js (Node + Edge), and the browser.**
 
 `@msgly/core` is the runtime every channel adapter plugs into. You won't usually depend on it directly for application code — install it alongside one or more adapters:
 
@@ -452,7 +452,7 @@ This means msgly runs everywhere modern JS does:
 
 | Runtime                       | Supported |
 | ----------------------------- | --------- |
-| Node 18+                      | ✓         |
+| Node 20+                      | ✓         |
 | Next.js Node runtime          | ✓         |
 | Next.js Edge runtime          | ✓         |
 | Bun / Deno                    | ✓         |

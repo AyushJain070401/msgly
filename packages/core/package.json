@@ -1,6 +1,6 @@
 {
   "name": "@msgly/core",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Core engine for the messaging hub — unified message model, adapter contract, event bus",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
@@ -51,5 +52,8 @@
     "bot",
     "chatbot",
     "webhook"
-  ]
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

@@ -19,6 +19,15 @@ export type KnownChannel =
   | 'smtp'
   | 'exotel'
   | 'vonage-sms'
+  | 'msg91'
+  | 'plivo'
+  | 'resend'
+  | 'telnyx'
+  | 'sendgrid'
+  | 'viber'
+  | 'mattermost'
+  | 'rocketchat'
+  | 'googlechat'
   | 'twilio-sms'
   | 'twilio-voice';
 
@@ -271,5 +280,18 @@ export interface DeliveryReceipt {
     /** Raw platform error code (e.g. "131000" on WhatsApp). No prefix applied. */
     code: string;
     message: string;
+    /**
+     * Whether the failure is permanent.
+     *
+     * - `true` — the address is dead (hard bounce, invalid recipient). Safe to
+     *   suppress; retrying will never succeed.
+     * - `false` — transient (mailbox full, deferred, rate limited). Must NOT
+     *   be suppressed; the address is probably fine.
+     * - `undefined` — the adapter could not tell. Treated as transient, since
+     *   wrongly suppressing a good address is the worse error.
+     */
+    permanent?: boolean;
+    /** True when the recipient reported the message as spam. */
+    complaint?: boolean;
   };
 }

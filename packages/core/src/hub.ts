@@ -15,6 +15,7 @@ import {
 } from './errors.js';
 import { retry, type RetryOptions } from './retry.js';
 import { createInMemoryStore, type MessageStore } from './storage.js';
+import type { SuppressionStore } from './suppression.js';
 import type {
   ChannelName,
   DeliveryReceipt,
@@ -119,6 +120,16 @@ export interface HubOptions {
    * real ceiling (a raised WhatsApp tier, a Twilio short code).
    */
   rateLimits?: Partial<Record<ChannelName, RateLimit>>;
+
+  /**
+   * Opt-out store consulted by `sendBulk` before every send. Recipients who
+   * have opted out are reported as `skipped` instead of being messaged.
+   *
+   * Honouring opt-outs is a legal requirement for SMS (TCPA, TRAI/DLT) and
+   * email (CAN-SPAM, GDPR), so configure this for any campaign traffic. Pair
+   * it with `applyConsentIntent` to capture STOP replies automatically.
+   */
+  suppressionStore?: SuppressionStore;
 }
 
 export interface Hub {
@@ -291,6 +302,7 @@ export function createHub(options: HubOptions = {}): Hub {
     onProgressError(err) {
       logger.warn({ err }, 'sendBulk onProgress callback threw');
     },
+    defaultSuppression: options.suppressionStore,
   });
 
   const hub: Hub = {

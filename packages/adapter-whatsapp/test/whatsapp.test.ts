@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createWhatsAppAdapter } from '../src/index.js';
 
@@ -240,5 +240,222 @@ describe('createWhatsAppAdapter', () => {
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.hint).toContain('24h');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// send() — the outbound path. Previously untested end to end, including the
+// template branch every campaign depends on.
+// ---------------------------------------------------------------------------
+
+describe('send', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function mockSend(payload: unknown = { messages: [{ id: 'wamid.ABC' }] }, status = 200) {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok: status < 400, status, json: async () => payload } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  function outbound(content: Parameters<ReturnType<typeof createWhatsAppAdapter>['send']>[0]['content']) {
+    return {
+      id: 'm-1',
+      direction: 'outbound' as const,
+      channel: 'whatsapp' as const,
+      account: { channel: 'whatsapp' as const, channelAccountId: '123456789' },
+      contact: { channel: 'whatsapp' as const, channelUserId: '919999999999' },
+      content,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  const bodyOf = (calls: Array<{ init?: RequestInit }>) =>
+    JSON.parse(calls[0]!.init!.body as string);
+
+  it('sends text with the messaging_product envelope', async () => {
+    const calls = mockSend();
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hello' }),
+    );
+
+    expect(receipt.status).toBe('sent');
+    expect(receipt.externalId).toBe('wamid.ABC');
+    expect(calls[0]!.url).toContain('/123456789/messages');
+    expect((calls[0]!.init!.headers as Record<string, string>).authorization).toBe(
+      'Bearer wa-token',
+    );
+
+    expect(bodyOf(calls)).toEqual({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: '919999999999',
+      type: 'text',
+      text: { body: 'hello' },
+    });
+  });
+
+  it('uses id for an uploaded media ref and link for a URL', async () => {
+    let calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'image',
+        mediaRef: { kind: 'platform-id', value: 'media-1' },
+        caption: 'chart',
+      }),
+    );
+    expect(bodyOf(calls).image).toEqual({ id: 'media-1', caption: 'chart' });
+
+    calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({ type: 'image', mediaRef: { kind: 'url', value: 'https://cdn/x.png' } }),
+    );
+    expect(bodyOf(calls).image).toEqual({ link: 'https://cdn/x.png' });
+  });
+
+  it('omits the caption on audio, which WhatsApp does not accept', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'audio',
+        mediaRef: { kind: 'platform-id', value: 'a-1' },
+        caption: 'ignored',
+      }),
+    );
+    expect(bodyOf(calls).audio).toEqual({ id: 'a-1' });
+  });
+
+  it('maps file content onto the document type', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'file',
+        mediaRef: { kind: 'platform-id', value: 'doc-1' },
+        caption: 'invoice.pdf',
+      }),
+    );
+
+    const body = bodyOf(calls);
+    expect(body.type).toBe('document');
+    expect(body.document).toEqual({ id: 'doc-1', caption: 'invoice.pdf' });
+  });
+
+  it('sends a location with optional name and address', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({ type: 'location', latitude: 12.9, longitude: 77.6, name: 'HQ' }),
+    );
+
+    expect(bodyOf(calls).location).toEqual({ latitude: 12.9, longitude: 77.6, name: 'HQ' });
+  });
+
+  it('flattens buttons, caps at 3 and truncates labels to 20 chars', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'interactive',
+        text: 'Pick one',
+        buttons: [
+          [{ id: 'a', label: 'A'.repeat(30) }],
+          [{ id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
+          [{ id: 'd', label: 'D' }],
+        ],
+      }),
+    );
+
+    const buttons = bodyOf(calls).interactive.action.buttons;
+    // WhatsApp rejects more than 3 reply buttons outright.
+    expect(buttons).toHaveLength(3);
+    expect(buttons[0].reply.title).toHaveLength(20);
+    expect(buttons.map((b: { reply: { id: string } }) => b.reply.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('builds a body component from template variables', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'template',
+        templateName: 'order_update',
+        language: 'en_US',
+        variables: { '1': 'Ayush', '2': 'ORD-42' },
+      }),
+    );
+
+    const body = bodyOf(calls);
+    expect(body.type).toBe('template');
+    expect(body.template.name).toBe('order_update');
+    expect(body.template.language).toEqual({ code: 'en_US' });
+    expect(body.template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Ayush' },
+          { type: 'text', text: 'ORD-42' },
+        ],
+      },
+    ]);
+  });
+
+  it('lets explicit components win over variables', async () => {
+    const calls = mockSend();
+    const components = [{ type: 'header', parameters: [{ type: 'image', image: { link: 'x' } }] }];
+
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'template',
+        templateName: 'promo',
+        language: 'en',
+        variables: { '1': 'ignored' },
+        components,
+      }),
+    );
+
+    // Rich templates need pass-through; the shorthand must not override them.
+    expect(bodyOf(calls).template.components).toEqual(components);
+  });
+
+  it('omits components entirely for a template with neither', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({ type: 'template', templateName: 'plain', language: 'en' }),
+    );
+    expect(bodyOf(calls).template.components).toBeUndefined();
+  });
+
+  it('surfaces a Meta error code on the receipt', async () => {
+    mockSend({ error: { code: 131047, message: 'Re-engagement message' } }, 400);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('wa_131047');
+    expect(receipt.error?.message).toBe('Re-engagement message');
+  });
+
+  it('fails when the API returns 200 with no message id', async () => {
+    // A 2xx without `messages` is not a successful send.
+    mockSend({}, 200);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+    expect(receipt.status).toBe('failed');
+  });
+});
+
+describe('fmt', () => {
+  it('produces WhatsApp markup, which uses single characters', async () => {
+    const { fmt } = await import('../src/index.js');
+    // WhatsApp differs from Slack and Markdown here.
+    expect(fmt.bold('x')).toBe('*x*');
+    expect(fmt.italic('x')).toBe('_x_');
+    expect(fmt.strikethrough('x')).toBe('~x~');
+    expect(fmt.monospace('x')).toBe('```x```');
   });
 });

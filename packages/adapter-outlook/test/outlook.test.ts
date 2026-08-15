@@ -505,3 +505,133 @@ describe('createOutlookAdapter', () => {
     }
   });
 });
+
+describe('List-Unsubscribe', () => {
+  function mockSend() {
+    const captured: { url?: string; init?: RequestInit } = {};
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === baseConfig.tokenUrl) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-1', expires_in: 3600 }),
+        } as Response;
+      }
+      captured.url = url;
+      captured.init = init;
+      return { ok: true, status: 202, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+    return captured;
+  }
+
+  function outbound(extra: Record<string, unknown> = {}) {
+    return {
+      id: 'm-1',
+      direction: 'outbound' as const,
+      channel: 'outlook' as const,
+      account: { channel: 'outlook' as const, channelAccountId: 'agent@acme.com' },
+      contact: { channel: 'outlook' as const, channelUserId: 'alice@example.com' },
+      content: { type: 'text' as const, text: 'campaign' },
+      timestamp: new Date().toISOString(),
+      metadata: { subject: 'Newsletter' },
+      ...extra,
+    };
+  }
+
+  it('switches to the MIME endpoint and sets the headers', async () => {
+    const captured = mockSend();
+    const a = createOutlookAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/u?e={{contact}}' },
+    });
+    const receipt = await a.send(outbound());
+
+    expect(receipt.status).toBe('sent');
+    // Graph's JSON internetMessageHeaders cannot carry List-Unsubscribe, so
+    // the adapter must send raw MIME instead.
+    expect(new Headers(captured.init!.headers).get('content-type')).toBe(
+      'text/plain',
+    );
+
+    const mime = atob(captured.init!.body as string);
+    expect(mime).toContain('List-Unsubscribe: <https://acme.com/u?e=alice%40example.com>');
+    expect(mime).toContain('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
+    expect(mime).toContain('From: agent@acme.com');
+    expect(mime).toContain('Subject: Newsletter');
+    expect(mime).toContain('campaign');
+  });
+
+  it('keeps using the JSON API when unsubscribe is not configured', async () => {
+    const captured = mockSend();
+    const a = createOutlookAdapter(baseConfig);
+    await a.send(outbound());
+
+    const body = JSON.parse(captured.init!.body as string);
+    expect(body.message.subject).toBe('Newsletter');
+    expect(body.saveToSentItems).toBe(true);
+  });
+
+  it('builds multipart MIME when attachments ride along', async () => {
+    const captured = mockSend();
+    const a = createOutlookAdapter({
+      ...baseConfig,
+      attachments: { enabled: true },
+      unsubscribe: { url: 'https://acme.com/u' },
+    });
+    const ref = await a.uploadMedia({
+      data: encode('PDF'),
+      mimeType: 'application/pdf',
+      filename: 'a.pdf',
+    });
+    await a.send(
+      outbound({
+        attachments: [{ mediaRef: ref, filename: 'a.pdf', mimeType: 'application/pdf' }],
+      }),
+    );
+
+    const mime = atob(captured.init!.body as string);
+    expect(mime).toContain('multipart/mixed');
+    expect(mime).toContain('List-Unsubscribe: <https://acme.com/u>');
+    expect(mime).toContain('filename="a.pdf"');
+    expect(mime).toContain(btoa('PDF'));
+  });
+
+  it('rejects a MIME message over Graph’s 4 MB limit with a clear error', async () => {
+    mockSend();
+    const a = createOutlookAdapter({
+      ...baseConfig,
+      attachments: { enabled: true },
+      unsubscribe: { url: 'https://acme.com/u' },
+    });
+    const ref = await a.uploadMedia({
+      data: new Uint8Array(4 * 1024 * 1024),
+      mimeType: 'application/pdf',
+      filename: 'big.pdf',
+    });
+    const receipt = await a.send(
+      outbound({
+        attachments: [{ mediaRef: ref, filename: 'big.pdf', mimeType: 'application/pdf' }],
+      }),
+    );
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('outlook_mime_too_large');
+    expect(receipt.error?.message).toContain('MIME sends');
+  });
+
+  it('strips CRLF so an unsubscribe URL cannot inject headers', async () => {
+    const captured = mockSend();
+    const a = createOutlookAdapter(baseConfig);
+    await a.send(
+      outbound({
+        metadata: {
+          subject: 'X',
+          unsubscribeUrl: 'https://acme.com/u\r\nBcc: evil@x.com',
+        },
+      }),
+    );
+
+    const mime = atob(captured.init!.body as string);
+    expect(mime).not.toMatch(/\r\nBcc: evil@x\.com/);
+  });
+});

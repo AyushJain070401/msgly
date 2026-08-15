@@ -3,6 +3,7 @@ import type {
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
+  UnsubscribeConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
@@ -12,6 +13,7 @@ import type {
   StateStore,
   WebhookRequest,
 } from '@msgly/core';
+import { buildUnsubscribeHeaders } from '@msgly/core';
 
 export interface GmailConfig {
   /** OAuth client id from Google Cloud Console → Credentials → OAuth 2.0 Client ID. */
@@ -94,6 +96,13 @@ export interface GmailConfig {
    * ```
    */
   attachments?: AttachmentsConfig;
+
+  /**
+   * One-click unsubscribe details. Gmail requires these headers from bulk
+   * senders — ironically, mail sent *through* Gmail to a large list is judged
+   * by the same rules. Per-message `metadata.unsubscribeUrl` overrides this.
+   */
+  unsubscribe?: UnsubscribeConfig;
 
   /** Cap how many messages we fetch per Pub/Sub notification. Default: 25. */
   maxMessagesPerNotification?: number;
@@ -522,6 +531,8 @@ function buildReplyEmail(opts: {
   format?: 'plain' | 'markdown' | 'html';
   inReplyTo?: string;
   references?: string;
+  /** Extra RFC 5322 headers, e.g. List-Unsubscribe. Values are sanitized. */
+  extraHeaders?: Record<string, string>;
 }): string {
   const contentType = opts.format === 'html'
     ? 'text/html; charset=utf-8'
@@ -537,6 +548,9 @@ function buildReplyEmail(opts: {
   ];
   if (opts.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeaderValue(opts.inReplyTo)}`);
   if (opts.references) headers.push(`References: ${sanitizeHeaderValue(opts.references)}`);
+  for (const [name, value] of Object.entries(opts.extraHeaders ?? {})) {
+    headers.push(`${sanitizeHeaderValue(name)}: ${sanitizeHeaderValue(value)}`);
+  }
   return `${headers.join('\r\n')}\r\n\r\n${opts.body}`;
 }
 
@@ -624,6 +638,8 @@ function buildMultipartEmail(opts: {
   format?: 'plain' | 'markdown' | 'html';
   inReplyTo?: string;
   references?: string;
+  /** Extra RFC 5322 headers, e.g. List-Unsubscribe. Values are sanitized. */
+  extraHeaders?: Record<string, string>;
   attachments: ResolvedAttachment[];
 }): string {
   const bodyContentType = opts.format === 'html'
@@ -644,6 +660,9 @@ function buildMultipartEmail(opts: {
   ];
   if (opts.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeaderValue(opts.inReplyTo)}`);
   if (opts.references) headers.push(`References: ${sanitizeHeaderValue(opts.references)}`);
+  for (const [name, value] of Object.entries(opts.extraHeaders ?? {})) {
+    headers.push(`${sanitizeHeaderValue(name)}: ${sanitizeHeaderValue(value)}`);
+  }
 
   const sections = [
     [
@@ -1063,6 +1082,11 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
         format: message.content.format,
         inReplyTo,
         references,
+        extraHeaders: buildUnsubscribeHeaders(
+          message.metadata,
+          config.unsubscribe,
+          message.contact.channelUserId,
+        ),
       };
       raw = outbound.length > 0
         ? buildMultipartEmail({

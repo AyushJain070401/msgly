@@ -3,6 +3,7 @@ import type {
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
+  UnsubscribeConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   InboundMessage,
@@ -12,6 +13,7 @@ import type {
   StateStore,
   WebhookRequest,
 } from '@msgly/core';
+import { buildUnsubscribeHeaders } from '@msgly/core';
 
 export interface OutlookConfig {
   /** OAuth client id from Entra ID → App registrations → your app. */
@@ -89,6 +91,17 @@ export interface OutlookConfig {
    */
   attachments?: AttachmentsConfig;
 
+  /**
+   * One-click unsubscribe details, required by Gmail and Yahoo from bulk
+   * senders.
+   *
+   * Setting these forces the send down Graph's **MIME** endpoint, because
+   * Graph's JSON `internetMessageHeaders` only accepts custom `x-` prefixed
+   * headers and silently drops `List-Unsubscribe`. The MIME path caps out at
+   * 4 MB including attachments.
+   */
+  unsubscribe?: UnsubscribeConfig;
+
   /** Override the OAuth token endpoint. */
   tokenUrl?: string;
   /** Override the Microsoft Graph base. Default: graph.microsoft.com/v1.0. */
@@ -155,6 +168,8 @@ const DEFAULT_EXPIRATION_MIN = 4230; // Graph's maximum for /messages
 
 /** Graph inlines `fileAttachment` bytes only up to 3 MB. */
 const GRAPH_INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+/** Graph caps a MIME send at 4 MB, including base64-encoded attachments. */
+const GRAPH_MIME_LIMIT = 4 * 1024 * 1024;
 
 /**
  * Capabilities depend on config: email can carry any file type, but only once
@@ -447,6 +462,103 @@ function extractMessageText(msg: GraphMessage): string | null {
  * which preserves the conversation thread automatically. Without it, the
  * adapter falls back to `POST /me/sendMail` for unsolicited outbound.
  */
+
+/** Sanitize a value destined for a MIME header — CRLF here means injection. */
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]/g, '');
+}
+
+function encodeFilename(name: string): string {
+  // RFC 2047 for anything outside ASCII, so non-Latin filenames survive.
+  return /^[\x20-\x7E]*$/.test(name)
+    ? `"${name.replace(/"/g, '')}"`
+    : `=?utf-8?B?${bytesToB64(new TextEncoder().encode(name))}?=`;
+}
+
+function b64MimeEncode(bytes: Uint8Array): string {
+  // MIME requires base64 wrapped at 76 characters.
+  return (bytesToB64(bytes).match(/.{1,76}/g) ?? []).join('\r\n');
+}
+
+/**
+ * Build an RFC 5322 message. Used when headers Graph's JSON API cannot express
+ * (notably List-Unsubscribe) are required.
+ */
+function buildMimeMessage(opts: {
+  from: string;
+  to: string;
+  subject: string;
+  body: string;
+  isHtml: boolean;
+  extraHeaders: Record<string, string>;
+  attachments: Array<{
+    bytes: Uint8Array;
+    filename: string;
+    mimeType: string;
+    inline?: boolean;
+    contentId?: string;
+  }>;
+}): string {
+  const bodyContentType = opts.isHtml
+    ? 'text/html; charset=utf-8'
+    : 'text/plain; charset=utf-8';
+
+  const baseHeaders = [
+    `From: ${sanitizeHeaderValue(opts.from)}`,
+    `To: ${sanitizeHeaderValue(opts.to)}`,
+    `Subject: ${sanitizeHeaderValue(opts.subject)}`,
+    'MIME-Version: 1.0',
+    `Date: ${new Date().toUTCString()}`,
+  ];
+  for (const [name, value] of Object.entries(opts.extraHeaders)) {
+    baseHeaders.push(`${sanitizeHeaderValue(name)}: ${sanitizeHeaderValue(value)}`);
+  }
+
+  if (opts.attachments.length === 0) {
+    return [
+      ...baseHeaders,
+      `Content-Type: ${bodyContentType}`,
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      opts.body,
+    ].join('\r\n');
+  }
+
+  const encoded = opts.attachments.map((a) => b64MimeEncode(a.bytes));
+  // A boundary must not appear in any part, or the message splits early.
+  let boundary = `msgly-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  while ([opts.body, ...encoded].some((p) => p.includes(boundary))) {
+    boundary = `msgly-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  }
+  const subtype = opts.attachments.some((a) => a.inline ?? a.contentId)
+    ? 'related'
+    : 'mixed';
+
+  const sections = [
+    [`Content-Type: ${bodyContentType}`, 'Content-Transfer-Encoding: 8bit', '', opts.body].join(
+      '\r\n',
+    ),
+    ...opts.attachments.map((a, i) =>
+      [
+        `Content-Type: ${sanitizeHeaderValue(a.mimeType)}; name=${encodeFilename(a.filename)}`,
+        'Content-Transfer-Encoding: base64',
+        `Content-Disposition: ${a.inline ?? a.contentId ? 'inline' : 'attachment'}; filename=${encodeFilename(a.filename)}`,
+        ...(a.contentId ? [`Content-ID: <${sanitizeHeaderValue(a.contentId)}>`] : []),
+        '',
+        encoded[i]!,
+      ].join('\r\n'),
+    ),
+  ];
+
+  return [
+    ...baseHeaders,
+    `Content-Type: multipart/${subtype}; boundary="${boundary}"`,
+    '',
+    ...sections.map((sec) => `--${boundary}\r\n${sec}`),
+    `--${boundary}--`,
+  ].join('\r\n');
+}
+
 export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
   const tenant = config.tenantId ?? DEFAULT_TENANT;
   const tokenUrl = config.tokenUrl ?? DEFAULT_TOKEN_URL(tenant);
@@ -687,6 +799,45 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
   }
 
   /** Turn outbound attachments into Graph fileAttachment objects. */
+  async function resolveMimeAttachments(
+    attachments: Attachment[],
+  ): Promise<
+    Array<{
+      bytes: Uint8Array;
+      filename: string;
+      mimeType: string;
+      inline?: boolean;
+      contentId?: string;
+    }>
+  > {
+    if (attachments.length === 0) return [];
+    assertAttachmentsEnabled('sending attachments');
+
+    const allowed = config.attachments?.allowedMimeTypes;
+    const maxSize = config.attachments?.maxSizeBytes;
+
+    return Promise.all(
+      attachments.map(async (a) => {
+        if (allowed && !allowed.includes(a.mimeType)) {
+          throw new Error(`Attachment type ${a.mimeType} is not in allowedMimeTypes`);
+        }
+        const bytes = await resolveBytes(a.mediaRef);
+        if (maxSize !== undefined && bytes.length > maxSize) {
+          throw new Error(
+            `Attachment ${a.filename} is ${bytes.length} bytes, over the ${maxSize} byte limit`,
+          );
+        }
+        return {
+          bytes,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          ...(a.inline !== undefined ? { inline: a.inline } : {}),
+          ...(a.contentId ? { contentId: a.contentId } : {}),
+        };
+      }),
+    );
+  }
+
   async function buildGraphAttachments(
     attachments: Attachment[],
   ): Promise<Record<string, unknown>[]> {
@@ -735,19 +886,30 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
 
     const replyTo = message.metadata?.['messageId'] as string | undefined;
 
-    let graphAttachments: Record<string, unknown>[];
-    try {
-      graphAttachments = await buildGraphAttachments(message.attachments ?? []);
-    } catch (err) {
-      return {
-        messageId: message.id,
-        status: 'failed',
-        timestamp: new Date().toISOString(),
-        error: {
-          code: 'outlook_attachment_error',
-          message: err instanceof Error ? err.message : String(err),
-        },
-      };
+    const unsubscribeHeaders = buildUnsubscribeHeaders(
+      message.metadata,
+      config.unsubscribe,
+      message.contact.channelUserId,
+    );
+    // The MIME path has its own 4 MB budget and its own attachment encoding,
+    // so building Graph's JSON attachments here would apply the wrong limit.
+    const useMime = !replyTo && Object.keys(unsubscribeHeaders).length > 0;
+
+    let graphAttachments: Record<string, unknown>[] = [];
+    if (!useMime) {
+      try {
+        graphAttachments = await buildGraphAttachments(message.attachments ?? []);
+      } catch (err) {
+        return {
+          messageId: message.id,
+          status: 'failed',
+          timestamp: new Date().toISOString(),
+          error: {
+            code: 'outlook_attachment_error',
+            message: err instanceof Error ? err.message : String(err),
+          },
+        };
+      }
     }
     const hasAttachments = graphAttachments.length > 0;
 
@@ -766,6 +928,53 @@ export function createOutlookAdapter(config: OutlookConfig): OutlookAdapter {
           }),
         },
       );
+    } else if (useMime) {
+      // Graph's JSON `internetMessageHeaders` only accepts custom `x-` headers
+      // and silently drops List-Unsubscribe, so send raw MIME instead.
+      const subjectMeta = message.metadata?.['subject'] as string | undefined;
+      let mime: string;
+      try {
+        mime = buildMimeMessage({
+          from: config.emailAddress ?? '',
+          to: message.contact.channelUserId,
+          subject: subjectMeta ?? '(no subject)',
+          body: message.content.text,
+          isHtml: message.content.format === 'html',
+          extraHeaders: unsubscribeHeaders,
+          attachments: await resolveMimeAttachments(message.attachments ?? []),
+        });
+      } catch (err) {
+        return {
+          messageId: message.id,
+          status: 'failed',
+          timestamp: new Date().toISOString(),
+          error: {
+            code: 'outlook_attachment_error',
+            message: err instanceof Error ? err.message : String(err),
+          },
+        };
+      }
+
+      const mimeBytes = new TextEncoder().encode(mime);
+      if (mimeBytes.length > GRAPH_MIME_LIMIT) {
+        return {
+          messageId: message.id,
+          status: 'failed',
+          timestamp: new Date().toISOString(),
+          error: {
+            code: 'outlook_mime_too_large',
+            message:
+              `The MIME message is ${mimeBytes.length} bytes, over Graph's ${GRAPH_MIME_LIMIT} byte limit ` +
+              'for MIME sends. Reduce attachment size, or drop `unsubscribe` to use the JSON API.',
+          },
+        };
+      }
+
+      res = await authedFetch('/me/sendMail', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: bytesToB64(mimeBytes),
+      });
     } else {
       const subjectMeta = message.metadata?.['subject'] as string | undefined;
       const subject = subjectMeta ?? '(no subject)';

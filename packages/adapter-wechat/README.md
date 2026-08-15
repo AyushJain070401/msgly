@@ -216,6 +216,32 @@ app.use(express.json());
 
 Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
+## Mass send
+
+WeChat Official Accounts can push to every follower, or to one tag group:
+
+```typescript
+// All followers
+await wechat.massSend({ type: 'text', text: 'New arrivals' });
+
+// One tag group
+await wechat.massSend({ type: 'text', text: 'VIP preview' }, { tagId: 7 });
+
+// An explicit openid list — max 10,000, and it does NOT consume the
+// monthly mass-send quota, so prefer it for segments
+await wechat.massSendToUsers(openIds, { type: 'text', text: 'hi' });
+```
+
+⚠️ **The quota is brutal and there is no undo.** A Service Account gets
+**4 mass sends per month**; a Subscription Account gets **1 per day**. A wasted
+send is gone for the period, so treat each call as final.
+
+Exhausting it returns `wechat_45028` — reported as a **retryable** failure,
+since the quota clears with time, with the limits spelled out in the message.
+
+Images and videos need a `media_id` from `uploadMedia()` first; passing a URL
+fails fast with an explanation rather than a bare error code.
+
 ## License
 
 MIT

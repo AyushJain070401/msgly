@@ -269,6 +269,103 @@ The lower-level entry point used by `createWebhookHandler`. Useful when wiring w
 
 Calls the optional `start()`/`stop()` lifecycle hooks on every registered adapter.
 
+## Campaigns — `hub.sendBulk(options)`
+
+Fan one message out to many contacts, paced to the channel's rate limit.
+
+```typescript
+const result = await hub.sendBulk({
+  channel: 'whatsapp',
+  account: { channel: 'whatsapp', channelAccountId: process.env.WA_PHONE_ID! },
+  recipients: customers.map((c) => ({
+    contact: { channel: 'whatsapp', channelUserId: c.phone },
+    metadata: { crmId: c.id },
+  })),
+  // A function, so each recipient gets their own variables:
+  content: (r) => ({
+    type: 'template',
+    templateName: 'order_update',
+    language: 'en_US',
+    variables: { '1': nameFor(r.contact) },
+  }),
+  concurrency: 8,
+  onProgress: (p) => console.log(`${p.completed}/${p.total}`),
+  signal: AbortSignal.timeout(60_000),
+});
+
+console.log(result.sent, result.failed, result.skipped);
+```
+
+It **resolves rather than rejects** when individual recipients fail — one bad
+number must not abort a 10,000-person campaign. `result.results` comes back in
+input order so you can zip it against your own list, and `result.failures` holds
+just the failed entries. Aborting via `signal` gives you partial results instead
+of throwing them away.
+
+Conservative per-channel rates ship built in (`CHANNEL_RATE_LIMITS`) and can be
+overridden per call, per adapter, or process-wide via `createHub({ rateLimits })`.
+
+### Some channels don't need fan-out
+
+LINE, WeChat, Viber and Telegram have a real broadcast primitive — one call
+reaches the whole audience. `sendBulk` is the wrong tool there:
+
+```typescript
+await line.broadcast({ type: 'text', text: 'Sale starts now' });
+await wechat.massSend({ type: 'text', text: 'New arrivals' });
+await viber.broadcast(ids, { type: 'text', text: 'Sale' });
+```
+
+## Opt-outs — `SuppressionStore`
+
+Honouring opt-outs is a legal requirement: TCPA and TRAI/DLT for SMS, CAN-SPAM
+and GDPR for email. `sendBulk` consults the store before **every** send.
+
+```typescript
+import {
+  createHub,
+  createInMemorySuppressionStore,   // or createKvSuppressionStore(redis)
+  applyConsentIntent,
+  applyDeliveryReceipt,
+} from '@msgly/core';
+
+const suppression = createInMemorySuppressionStore();
+const hub = createHub({ suppressionStore: suppression });
+
+// Capture STOP / UNSUBSCRIBE replies automatically
+hub.on('message', (msg) => applyConsentIntent(msg, suppression));
+
+// Retire hard-bounced and complained addresses
+hub.on('delivery', (r) => applyDeliveryReceipt(r, 'resend', suppression));
+```
+
+Three behaviours worth knowing:
+
+- Suppressed recipients are reported as **`skipped`**, never `failed` — nothing
+  went wrong, and retrying them would be the violation. They also consume no
+  rate-limit budget.
+- If the store is unreachable the send is **skipped, not sent**. Not sending is
+  the recoverable mistake.
+- Only **permanent** failures suppress. A deferral or full mailbox is left
+  alone, and an unclassifiable failure suppresses nothing.
+
+`detectConsentIntent(text)` matches whole messages only, in several languages —
+so *"please stop sending the weekly digest"* is **not** treated as a global
+opt-out.
+
+### `List-Unsubscribe`
+
+Gmail and Yahoo have required one-click unsubscribe headers from bulk senders
+since February 2024. Every email adapter emits them from an `unsubscribe`
+config:
+
+```typescript
+createResendAdapter({ ...cfg, unsubscribe: { url: 'https://acme.com/u?e={{contact}}' } });
+```
+
+`{{contact}}` is replaced with the recipient's address, and
+`metadata.unsubscribeUrl` overrides it per message for per-recipient tokens.
+
 ## Retry
 
 Sends are wrapped in exponential backoff with **equal jitter**:

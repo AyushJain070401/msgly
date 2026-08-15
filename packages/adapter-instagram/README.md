@@ -249,6 +249,41 @@ fmt.link('click', 'https://example.com') // → 'click'
 
 Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
+## Publishing a post
+
+Feed posts are **content publishing, not messaging**. A post has no recipient,
+so it gets its own method rather than being forced through `send()`:
+
+```typescript
+const instagram = createInstagramAdapter({
+  ...cfg,
+  igUserId: process.env.IG_USER_ID!,   // the IG account id, NOT the Page id
+});
+
+await instagram.publishPost({
+  imageUrl: 'https://cdn.acme.com/promo.jpg',
+  caption: 'Spring sale is live 🌸',
+});
+
+// Reels
+await instagram.publishPost({ videoUrl: 'https://cdn.acme.com/clip.mp4', isReel: true });
+```
+
+Three things that trip people up:
+
+- **`igUserId` is not the Page id.** Fetch it with
+  `GET /{page-id}?fields=instagram_business_account`.
+- **Instagram fetches the media itself**, server-side. A presigned S3 URL works;
+  a `localhost` URL never will. That is the most common container failure, and
+  the thrown error says so.
+- The account must be **Business or Creator**, and Instagram caps you at
+  **50 posts per rolling 24 hours**.
+
+Publishing is a two-step flow — create a container, then publish it — and both
+steps happen inside `publishPost()`. The returned `containerId` is there for
+debugging: a video container needs a few seconds of processing, so a publish
+immediately after upload can fail while the container itself is fine.
+
 ## License
 
 MIT

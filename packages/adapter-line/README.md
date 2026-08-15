@@ -191,6 +191,35 @@ User tap → you receive a text message whose `content.text` matches the button 
 
 Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
+## Broadcast — the campaign primitive
+
+LINE is one of the few channels with a true broadcast API. Reaching 100,000
+friends is **one request**, not 100,000 — so use these rather than `sendBulk`:
+
+```typescript
+// Every friend of the official account
+await line.broadcast(
+  { type: 'text', text: 'Spring sale starts now' },
+  { retryKey: 'spring-2026' },   // LINE de-duplicates retries with the same key
+);
+
+// A segment — max 500 user ids per call
+await line.multicast(segmentIds, { type: 'text', text: 'Just for you' });
+
+// How much of the monthly plan quota is left (null = unlimited plan)
+const left = await line.getQuotaRemaining();
+```
+
+The **retry key matters**: without it, a network timeout on a broadcast leaves
+you unable to retry safely, because you cannot tell whether the campaign went
+out. With it, LINE discards the duplicate.
+
+A broadcast consumes your plan's monthly message quota and **cannot be
+recalled**. A `429` back is the quota or a rate limit — the adapter marks it
+retryable, while a `4xx` is marked permanent.
+
+Pass `notificationDisabled: true` to deliver silently.
+
 ## License
 
 MIT

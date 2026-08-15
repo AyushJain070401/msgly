@@ -164,6 +164,24 @@ User taps → your `message` event fires with `content.text` equal to the button
 
 Full setup walkthrough and multi-channel usage: https://github.com/AyushJain070401/msgly
 
+## Publishing a Page post
+
+Messenger has **no marketing broadcast** — only the 24-hour window and message
+tags. Posting to the Page feed is the one broadcast route Meta offers here, and
+like Instagram it is publishing rather than messaging:
+
+```typescript
+const messenger = createMessengerAdapter({ ...cfg, pageId: process.env.FB_PAGE_ID! });
+
+await messenger.publishPost({ message: 'We are hiring', link: 'https://acme.com/jobs' });
+
+// A photo post uses a different Graph edge; the adapter picks it for you
+await messenger.publishPost({ photoUrl: 'https://cdn.acme.com/x.jpg', message: 'Look' });
+```
+
+The Page token needs the **`pages_manage_posts`** permission — the thrown error
+names it, since a missing scope is the usual cause of a 403 here.
+
 ## License
 
 MIT

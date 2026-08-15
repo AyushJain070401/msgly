@@ -48,6 +48,25 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Catches a new package scaffolded at the wrong version, which would
+      # otherwise only surface when the release workflow refuses to publish.
+      - name: Verify every package has one shared version
+        run: |
+          set -euo pipefail
+          versions=$(node -e "
+            const fs = require('fs');
+            const vs = fs.readdirSync('packages')
+              .map(d => require('./packages/' + d + '/package.json').version);
+            console.log([...new Set(vs)].join(' '));
+          ")
+          if [ "$(echo "$versions" | wc -w)" -ne 1 ]; then
+            echo "::error::Packages have diverging versions: $versions"
+            echo "All @msgly packages share one version. A new package must be created at the"
+            echo "current version — copy it from packages/core/package.json."
+            exit 1
+          fi
+          echo "All packages at $versions"
+
   # Publishing 26 packages part-way through is painful to unwind, so verify
   # the tarballs actually pack before a release is ever attempted.
   pack:

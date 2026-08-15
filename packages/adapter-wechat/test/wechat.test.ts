@@ -450,3 +450,84 @@ describe('createWeChatAdapter', () => {
     }
   });
 });
+
+describe('mass send', () => {
+  function mockMass(payload: unknown) {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.includes('/cgi-bin/token')) return tokenResponse();
+      return { ok: true, status: 200, json: async () => payload } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  it('mass-sends text to all followers', async () => {
+    const calls = mockMass({ errcode: 0, msg_id: 999 });
+    const receipt = await createWeChatAdapter(config).massSend({
+      type: 'text',
+      text: 'New arrivals',
+    });
+
+    expect(receipt.status).toBe('sent');
+    expect(receipt.externalId).toBe('999');
+
+    const call = calls.find((c) => c.url.includes('mass/sendall'))!;
+    const body = JSON.parse(call.init!.body as string);
+    expect(body.filter).toEqual({ is_to_all: true });
+    expect(body.text).toEqual({ content: 'New arrivals' });
+  });
+
+  it('targets a tag group when given one', async () => {
+    const calls = mockMass({ errcode: 0, msg_id: 1 });
+    await createWeChatAdapter(config).massSend({ type: 'text', text: 'x' }, { tagId: 7 });
+
+    const body = JSON.parse(calls.find((c) => c.url.includes('mass/sendall'))!.init!.body as string);
+    expect(body.filter).toEqual({ is_to_all: false, tag_id: 7 });
+  });
+
+  it('explains an exhausted quota and marks it retryable', async () => {
+    // 4 per month for Service Accounts — the quota clears, so this is not
+    // a permanent failure.
+    mockMass({ errcode: 45028, errmsg: 'reach max api daily quota limit' });
+    const receipt = await createWeChatAdapter(config).massSend({ type: 'text', text: 'x' });
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('wechat_45028');
+    expect(receipt.error?.message).toContain('4/month');
+    expect(receipt.error?.permanent).toBe(false);
+  });
+
+  it('mass-sends to an explicit openid list', async () => {
+    const calls = mockMass({ errcode: 0, msg_id: 2 });
+    const receipt = await createWeChatAdapter(config).massSendToUsers(
+      ['o_1', 'o_2'],
+      { type: 'text', text: 'hi' },
+    );
+
+    expect(receipt.status).toBe('sent');
+    const body = JSON.parse(calls.find((c) => c.url.includes('mass/send'))!.init!.body as string);
+    expect(body.touser).toEqual(['o_1', 'o_2']);
+  });
+
+  it('rejects an oversized or empty openid list', async () => {
+    const a = createWeChatAdapter(config);
+    const empty = await a.massSendToUsers([], { type: 'text', text: 'x' });
+    expect(empty.error?.code).toBe('wechat_no_recipients');
+
+    const tooMany = await a.massSendToUsers(
+      Array.from({ length: 10_001 }, (_, i) => `o${i}`),
+      { type: 'text', text: 'x' },
+    );
+    expect(tooMany.error?.code).toBe('wechat_recipient_limit');
+  });
+
+  it('requires a media_id for image mass sends', async () => {
+    const receipt = await createWeChatAdapter(config).massSend({
+      type: 'image',
+      mediaRef: { kind: 'url', value: 'https://x/y.png' },
+    });
+    expect(receipt.error?.code).toBe('wechat_unsupported_content');
+    expect(receipt.error?.message).toContain('uploadMedia');
+  });
+});

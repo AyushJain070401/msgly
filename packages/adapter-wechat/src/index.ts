@@ -6,6 +6,7 @@ import type {
   InboundMessage,
   MediaFile,
   MediaReference,
+  MessageContent,
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
@@ -36,6 +37,26 @@ export interface WeChatConfig {
 
 export interface WeChatAdapter extends Adapter {
   readonly channel: 'wechat';
+  /**
+   * Mass-send to every follower, or to one tag group.
+   *
+   * ⚠️ WeChat meters this extremely tightly: **4 per month** for a Service
+   * Account, **1 per day** for a Subscription Account. There is no way to
+   * recall a mass send, and a wasted one is gone for the period — so treat
+   * each call as final.
+   *
+   * Omit `tagId` to reach all followers.
+   */
+  massSend(
+    content: MessageContent,
+    options?: { tagId?: number },
+  ): Promise<DeliveryReceipt>;
+  /**
+   * Mass-send to an explicit list of openids. WeChat caps this at 10,000 per
+   * call and it does **not** count against the monthly mass-send quota, which
+   * makes it the better choice for a targeted segment.
+   */
+  massSendToUsers(openIds: string[], content: MessageContent): Promise<DeliveryReceipt>;
   /**
    * Retrieve a valid access token, auto-refreshing when it expires.
    * The token has a 2-hour TTL; the adapter caches it with a 1-minute buffer.
@@ -525,9 +546,166 @@ export function createWeChatAdapter(config: WeChatConfig): WeChatAdapter {
     }
   }
 
+  /** WeChat's mass API uses different message shapes from the custom-service API. */
+  function toMassBody(content: MessageContent): Record<string, unknown> {
+    switch (content.type) {
+      case 'text':
+        return { msgtype: 'text', text: { content: content.text } };
+      case 'image':
+        if (content.mediaRef.kind !== 'platform-id') {
+          throw new Error(
+            'WeChat mass image send needs a media_id — upload first with adapter.uploadMedia().',
+          );
+        }
+        return { msgtype: 'image', images: { media_ids: [content.mediaRef.value] } };
+      case 'video':
+        if (content.mediaRef.kind !== 'platform-id') {
+          throw new Error('WeChat mass video send needs a media_id.');
+        }
+        return { msgtype: 'mpvideo', mpvideo: { media_id: content.mediaRef.value } };
+      default:
+        throw new Error(
+          `WeChat mass send supports text, image and video (received: ${(content as { type: string }).type})`,
+        );
+    }
+  }
+
+  async function callMassApi(
+    path: string,
+    body: Record<string, unknown>,
+    receiptId: string,
+  ): Promise<DeliveryReceipt> {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${apiBase}${path}?access_token=${token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        errcode?: number;
+        errmsg?: string;
+        msg_id?: number;
+      };
+
+      if (!data.errcode || data.errcode === 0) {
+        return {
+          messageId: receiptId,
+          ...(data.msg_id ? { externalId: String(data.msg_id) } : {}),
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      return {
+        messageId: receiptId,
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: `wechat_${data.errcode}`,
+          message:
+            data.errcode === 45028
+              ? 'Mass-send quota exhausted for this period (4/month for Service Accounts, 1/day for Subscription Accounts).'
+              : (data.errmsg ?? 'unknown'),
+          // A spent quota clears with time; a bad media id never will.
+          permanent: data.errcode !== 45028 && data.errcode !== 45009,
+        },
+      };
+    } catch (err) {
+      return {
+        messageId: receiptId,
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'wechat_network_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
+
+  async function massSend(
+    content: MessageContent,
+    options?: { tagId?: number },
+  ): Promise<DeliveryReceipt> {
+    let body: Record<string, unknown>;
+    try {
+      body = toMassBody(content);
+    } catch (err) {
+      return {
+        messageId: 'mass',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'wechat_unsupported_content',
+          message: err instanceof Error ? err.message : String(err),
+          permanent: true,
+        },
+      };
+    }
+
+    return callMassApi(
+      '/cgi-bin/message/mass/sendall',
+      {
+        filter:
+          options?.tagId === undefined
+            ? { is_to_all: true }
+            : { is_to_all: false, tag_id: options.tagId },
+        ...body,
+      },
+      'mass',
+    );
+  }
+
+  async function massSendToUsers(
+    openIds: string[],
+    content: MessageContent,
+  ): Promise<DeliveryReceipt> {
+    if (openIds.length === 0) {
+      return {
+        messageId: 'mass',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: { code: 'wechat_no_recipients', message: 'massSendToUsers needs at least one openid' },
+      };
+    }
+    if (openIds.length > 10_000) {
+      return {
+        messageId: 'mass',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'wechat_recipient_limit',
+          message: `WeChat accepts at most 10000 openids per call (got ${openIds.length}).`,
+          permanent: true,
+        },
+      };
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = toMassBody(content);
+    } catch (err) {
+      return {
+        messageId: 'mass',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'wechat_unsupported_content',
+          message: err instanceof Error ? err.message : String(err),
+          permanent: true,
+        },
+      };
+    }
+
+    return callMassApi('/cgi-bin/message/mass/send', { touser: openIds, ...body }, 'mass');
+  }
+
   return {
     channel: 'wechat',
     capabilities: CAPABILITIES,
+    massSend,
+    massSendToUsers,
     send,
     handleWebhook,
     verifySignature,

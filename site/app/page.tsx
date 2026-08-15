@@ -7,6 +7,7 @@ import CountUp from './components/CountUp';
 import BrandMark from './components/BrandMark';
 import {
   REPO,
+  broadcastCode,
   campaignCode,
   campaignTiers,
   channels,
@@ -253,6 +254,28 @@ export default function Home() {
                   </div>
                 ))}
               </div>
+            </Reveal>
+          </div>
+
+          <div className="wrap split" style={{ marginTop: 52 }}>
+            <Reveal>
+              <p className="eyebrow">Broadcast</p>
+              <h2>Some channels don&apos;t need fan-out at all.</h2>
+              <p className="lede">
+                LINE, WeChat, Viber and Telegram have a real broadcast primitive: one API call reaches the entire
+                audience, with no per-recipient cost and no rate-limit pacing to worry about. Reaching 100,000 LINE
+                friends is a single request, not 100,000 of them.
+              </p>
+              <p className="lede">
+                Instagram and Facebook are different again —{' '}
+                <code style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>publishPost()</code> puts a post on
+                the feed. A post has no recipient, so it deliberately sits outside{' '}
+                <code style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>send()</code> rather than pretending
+                to be a message.
+              </p>
+            </Reveal>
+            <Reveal delay={120}>
+              <CodeBlock file="broadcast.ts" code={broadcastCode} />
             </Reveal>
           </div>
 

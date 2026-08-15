@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMessengerAdapter } from '../src/index.js';
 
@@ -141,5 +141,58 @@ describe('createMessengerAdapter', () => {
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.hint).toContain('Messenger');
+  });
+});
+
+describe('publishPost', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function mockGraph(payload: unknown, ok = true) {
+    const calls: Array<{ url: string; body: string }> = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: (init?.body as string) ?? '' });
+      return { ok, status: ok ? 200 : 403, json: async () => payload } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  it('publishes a text post to the Page feed', async () => {
+    const calls = mockGraph({ id: 'page_post_1' });
+    const a = createMessengerAdapter({ ...config, pageId: 'page-1' });
+
+    const result = await a.publishPost({ message: 'We are hiring' });
+
+    expect(result.id).toBe('page_post_1');
+    expect(calls[0]!.url).toContain('/page-1/feed');
+    expect(calls[0]!.body).toContain('message=We+are+hiring');
+  });
+
+  it('uses the photos edge for an image post', async () => {
+    const calls = mockGraph({ post_id: 'page_post_2' });
+    const a = createMessengerAdapter({ ...config, pageId: 'page-1' });
+    await a.publishPost({ photoUrl: 'https://cdn.acme.com/x.jpg', message: 'Look' });
+
+    // A photo post is a different edge from a plain status.
+    expect(calls[0]!.url).toContain('/page-1/photos');
+    expect(calls[0]!.body).toContain('caption=Look');
+  });
+
+  it('names the permission needed when Facebook refuses', async () => {
+    mockGraph({ error: { message: 'Insufficient permission' } }, false);
+    const a = createMessengerAdapter({ ...config, pageId: 'page-1' });
+
+    await expect(a.publishPost({ message: 'x' })).rejects.toThrow('pages_manage_posts');
+  });
+
+  it('requires a page id and some content', async () => {
+    const noPage = createMessengerAdapter(config);
+    await expect(noPage.publishPost({ message: 'x' })).rejects.toThrow('Page id');
+
+    const a = createMessengerAdapter({ ...config, pageId: 'p' });
+    await expect(a.publishPost({})).rejects.toThrow('message, link or photoUrl');
   });
 });

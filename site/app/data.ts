@@ -3,20 +3,20 @@ export type Channel = {
   pkg: string;
   category: 'Chat & social' | 'Email' | 'SMS & voice' | 'Push' | 'Core';
   notes: string;
-  campaign: 'Outbound' | 'Policy-gated' | 'Reply-only' | 'Not for campaigns' | '—';
+  campaign: 'Outbound' | 'Broadcast' | 'Policy-gated' | 'Reply-only' | 'Not for campaigns' | '—';
 };
 
 export const channels: Channel[] = [
-  { name: 'Telegram', pkg: '@msgly/telegram', category: 'Chat & social', notes: 'Bot API with inline keyboards, reactions and polls', campaign: 'Reply-only' },
-  { name: 'WhatsApp', pkg: '@msgly/whatsapp', category: 'Chat & social', notes: 'Full Cloud Business API with approved templates', campaign: 'Policy-gated' },
-  { name: 'Messenger', pkg: '@msgly/messenger', category: 'Chat & social', notes: 'Meta Send API for Page inboxes and quick replies', campaign: 'Policy-gated' },
-  { name: 'Instagram', pkg: '@msgly/instagram', category: 'Chat & social', notes: 'Direct messages, plus Instagram Login OAuth support', campaign: 'Policy-gated' },
-  { name: 'LINE', pkg: '@msgly/line', category: 'Chat & social', notes: 'Messaging API, quick replies and free reply tokens', campaign: 'Reply-only' },
+  { name: 'Telegram', pkg: '@msgly/telegram', category: 'Chat & social', notes: 'Bot API, inline keyboards, and channel posting via @name', campaign: 'Broadcast' },
+  { name: 'WhatsApp', pkg: '@msgly/whatsapp', category: 'Chat & social', notes: 'Cloud Business API; approved MARKETING templates for campaigns', campaign: 'Policy-gated' },
+  { name: 'Messenger', pkg: '@msgly/messenger', category: 'Chat & social', notes: 'Meta Send API, plus publishPost() to the Page feed', campaign: 'Broadcast' },
+  { name: 'Instagram', pkg: '@msgly/instagram', category: 'Chat & social', notes: 'Direct messages, plus publishPost() for feed posts and Reels', campaign: 'Broadcast' },
+  { name: 'LINE', pkg: '@msgly/line', category: 'Chat & social', notes: 'broadcast() to all friends, multicast() to a segment', campaign: 'Broadcast' },
   { name: 'Discord', pkg: '@msgly/discord', category: 'Chat & social', notes: 'HTTP Interactions with buttons and message components', campaign: 'Not for campaigns' },
   { name: 'Microsoft Teams', pkg: '@msgly/msteams', category: 'Chat & social', notes: 'Bot Framework channel with Adaptive Card support', campaign: 'Not for campaigns' },
-  { name: 'Slack', pkg: '@msgly/slack', category: 'Chat & social', notes: 'Events API with Block Kit blocks and interactions', campaign: 'Not for campaigns' },
-  { name: 'WeChat', pkg: '@msgly/wechat', category: 'Chat & social', notes: 'Official Account messaging with encrypted callbacks', campaign: 'Reply-only' },
-  { name: 'Viber', pkg: '@msgly/viber', category: 'Chat & social', notes: 'Business Messages, keyboards and signed webhooks', campaign: 'Reply-only' },
+  { name: 'Slack', pkg: '@msgly/slack', category: 'Chat & social', notes: 'Events API and Block Kit; posts to a channel, not to users', campaign: 'Not for campaigns' },
+  { name: 'WeChat', pkg: '@msgly/wechat', category: 'Chat & social', notes: 'massSend() to all followers or a tag group, quota-metered', campaign: 'Broadcast' },
+  { name: 'Viber', pkg: '@msgly/viber', category: 'Chat & social', notes: 'broadcast() to up to 300 subscribers per call', campaign: 'Broadcast' },
   { name: 'Mattermost', pkg: '@msgly/mattermost', category: 'Chat & social', notes: 'Self-hosted chat over REST and outgoing webhooks', campaign: 'Not for campaigns' },
   { name: 'Rocket.Chat', pkg: '@msgly/rocketchat', category: 'Chat & social', notes: 'Self-hosted chat via REST plus outgoing webhooks', campaign: 'Not for campaigns' },
   { name: 'Google Chat', pkg: '@msgly/googlechat', category: 'Chat & social', notes: 'Service-account auth with Google-signed webhooks', campaign: 'Not for campaigns' },
@@ -177,10 +177,40 @@ const result = await hub.sendBulk({ /* ... */ });
 console.log(result.sent, result.skipped); // skipped = opted out`;
 
 export const campaignTiers = [
-  { tier: 'Built for outbound', tone: 'good', channels: 'SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM', note: 'Email, SMS and push. Honour opt-outs.' },
-  { tier: 'Policy-gated', tone: 'warn', channels: 'WhatsApp, Messenger, Instagram', note: 'Need approved templates or a 24h window.' },
-  { tier: 'Reply-only', tone: 'warn', channels: 'Telegram, Viber, LINE, WeChat', note: 'The user must contact you first; no cold outreach.' },
-  { tier: 'Not campaign channels', tone: 'bad', channels: 'Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat', note: 'The recipient is a room, not a person.' },
+  { tier: 'Built for outbound', tone: 'good', channels: 'SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM', note: 'Email, SMS and push, fanned out per recipient. Honour opt-outs.' },
+  { tier: 'Native broadcast', tone: 'good', channels: 'LINE, WeChat, Viber, Telegram, FCM topics', note: 'One API call reaches the whole audience — no per-recipient fan-out.' },
+  { tier: 'Feed publishing', tone: 'good', channels: 'Instagram, Facebook Pages', note: 'publishPost() puts a post on the feed. No recipient, so it sits outside send().' },
+  { tier: 'Policy-gated', tone: 'warn', channels: 'WhatsApp', note: 'Real campaign channel, but needs approved MARKETING templates and opt-in.' },
+  { tier: 'Reply-only DMs', tone: 'warn', channels: 'Messenger, Instagram DMs', note: '24h window and message tags only — no DM marketing broadcast.' },
+  { tier: 'Not campaign channels', tone: 'bad', channels: 'Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat', note: 'The recipient is a room, not a person. Post to a channel instead.' },
 ];
+
+/** Shown alongside sendBulk to make the distinction concrete. */
+export const broadcastCode = `// LINE: one call reaches every friend — no fan-out, no per-recipient cost
+await line.broadcast(
+  { type: 'text', text: 'Sale starts now' },
+  { retryKey: 'spring-sale-2026' },   // a timeout cannot double-send
+);
+
+// WeChat: all followers, or one tag group. Metered at 4/month.
+await wechat.massSend({ type: 'text', text: 'New arrivals' }, { tagId: 7 });
+
+// Viber: up to 300 subscribers per call, with per-recipient failures returned
+const r = await viber.broadcast(ids, { type: 'text', text: 'Sale' });
+r.metadata?.failed; // [{ id, status }] — feed these to the suppression store
+
+// Telegram: a channel is just another chat id
+await hub.send({
+  channel: 'telegram',
+  contact: { channel: 'telegram', channelUserId: '@acme_announcements' },
+  content: { type: 'text', text: 'Shipped v2' },
+  account: { channel: 'telegram', channelAccountId: 'acme_bot' },
+});
+
+// Instagram / Facebook: publishing, not messaging
+await instagram.publishPost({
+  imageUrl: 'https://cdn.acme.com/promo.jpg',
+  caption: 'Spring sale is live',
+});`;
 
 export const REPO = 'https://github.com/AyushJain070401/msgly';

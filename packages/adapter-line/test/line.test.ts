@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLineAdapter } from '../src/index.js';
 
@@ -8,6 +8,12 @@ const config = {
 };
 
 const encode = (s: string) => new TextEncoder().encode(s);
+
+const originalFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
 
 async function signLine(body: Uint8Array): Promise<string> {
   const key = await globalThis.crypto.subtle.importKey(
@@ -148,5 +154,96 @@ describe('createLineAdapter', () => {
     const result = await a.verifyCredentials();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.hint).toContain('Channel secret');
+  });
+});
+
+describe('broadcast and multicast', () => {
+  function mockPost(status = 200, payload: unknown = {}) {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok: status < 400, status, json: async () => payload } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  it('broadcasts to every friend in one call', async () => {
+    const calls = mockPost();
+    const a = createLineAdapter(config);
+    const receipt = await a.broadcast({ type: 'text', text: 'Sale is live' });
+
+    expect(receipt.status).toBe('sent');
+    expect(calls[0]!.url).toContain('/v2/bot/message/broadcast');
+    const body = JSON.parse(calls[0]!.init!.body as string);
+    expect(body.messages).toEqual([{ type: 'text', text: 'Sale is live' }]);
+    // No recipient list at all — that is the point of broadcast.
+    expect(body.to).toBeUndefined();
+  });
+
+  it('passes a retry key so a timeout cannot double-send a campaign', async () => {
+    const calls = mockPost();
+    const a = createLineAdapter(config);
+    await a.broadcast({ type: 'text', text: 'x' }, { retryKey: 'campaign-42' });
+
+    expect((calls[0]!.init!.headers as Record<string, string>)['X-Line-Retry-Key']).toBe(
+      'campaign-42',
+    );
+  });
+
+  it('multicasts to a segment', async () => {
+    const calls = mockPost();
+    const a = createLineAdapter(config);
+    const receipt = await a.multicast(['U1', 'U2'], { type: 'text', text: 'hi' });
+
+    expect(receipt.status).toBe('sent');
+    expect(calls[0]!.url).toContain('/v2/bot/message/multicast');
+    expect(JSON.parse(calls[0]!.init!.body as string).to).toEqual(['U1', 'U2']);
+  });
+
+  it('refuses a multicast over LINE’s 500-recipient limit', async () => {
+    const calls = mockPost();
+    const a = createLineAdapter(config);
+    const receipt = await a.multicast(
+      Array.from({ length: 501 }, (_, i) => `U${i}`),
+      { type: 'text', text: 'x' },
+    );
+
+    expect(receipt.status).toBe('failed');
+    expect(receipt.error?.code).toBe('line_multicast_limit');
+    expect(receipt.error?.permanent).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects an empty multicast', async () => {
+    const a = createLineAdapter(config);
+    const receipt = await a.multicast([], { type: 'text', text: 'x' });
+    expect(receipt.error?.code).toBe('line_no_recipients');
+  });
+
+  it('treats a quota 429 as retryable but a 400 as permanent', async () => {
+    mockPost(429, { message: 'monthly limit exceeded' });
+    const quota = await createLineAdapter(config).broadcast({ type: 'text', text: 'x' });
+    expect(quota.error?.permanent).toBe(false);
+
+    mockPost(400, { message: 'invalid message' });
+    const bad = await createLineAdapter(config).broadcast({ type: 'text', text: 'x' });
+    expect(bad.error?.permanent).toBe(true);
+  });
+
+  it('reports remaining quota, and null on an unlimited plan', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.includes('consumption') ? { totalUsage: 300 } : { type: 'limited', value: 1000 },
+    })) as unknown as typeof fetch;
+    expect(await createLineAdapter(config).getQuotaRemaining()).toBe(700);
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => (url.includes('consumption') ? { totalUsage: 0 } : { type: 'none' }),
+    })) as unknown as typeof fetch;
+    expect(await createLineAdapter(config).getQuotaRemaining()).toBeNull();
   });
 });

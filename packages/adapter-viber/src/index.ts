@@ -33,6 +33,18 @@ export interface ViberAdapter extends Adapter {
   setWebhook(url: string, eventTypes?: string[]): Promise<void>;
   /** Remove the webhook, stopping all inbound events. */
   removeWebhook(): Promise<void>;
+  /**
+   * Send one message to many subscribers in a single call — Viber's campaign
+   * primitive. Capped at 300 receivers per request.
+   *
+   * Viber reports per-recipient outcomes rather than failing the whole call,
+   * so the returned receipt is `sent` when *any* recipient succeeded, and
+   * `failed` recipients are listed in `metadata.failed` for suppression.
+   */
+  broadcast(
+    receiverIds: string[],
+    content: MessageContent,
+  ): Promise<DeliveryReceipt & { metadata?: { failed: Array<{ id: string; status: number }> } }>;
 }
 
 const DEFAULT_API_BASE = 'https://chatapi.viber.com';
@@ -41,6 +53,8 @@ const DEFAULT_API_BASE = 'https://chatapi.viber.com';
 const MAX_BUTTONS = 24;
 const MAX_BUTTON_TEXT = 250;
 const MAX_SENDER_NAME = 28;
+/** Viber rejects a broadcast with more than 300 receivers. */
+const MAX_BROADCAST_RECEIVERS = 300;
 
 const CAPABILITIES: AdapterCapabilities = {
   text: true,
@@ -470,9 +484,104 @@ export function createViberAdapter(config: ViberConfig): ViberAdapter {
     };
   }
 
+  async function broadcast(
+    receiverIds: string[],
+    content: MessageContent,
+  ): Promise<DeliveryReceipt & { metadata?: { failed: Array<{ id: string; status: number }> } }> {
+    const now = () => new Date().toISOString();
+
+    if (receiverIds.length === 0) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: now(),
+        error: { code: 'viber_no_recipients', message: 'broadcast needs at least one receiver' },
+      };
+    }
+    if (receiverIds.length > MAX_BROADCAST_RECEIVERS) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: now(),
+        error: {
+          code: 'viber_broadcast_limit',
+          message:
+            `Viber accepts at most ${MAX_BROADCAST_RECEIVERS} receivers per broadcast ` +
+            `(got ${receiverIds.length}). Split the audience into chunks.`,
+          permanent: true,
+        },
+      };
+    }
+
+    const body = buildOutbound(content);
+    if (!body) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: now(),
+        error: {
+          code: 'viber_unsupported_content',
+          message: `Viber cannot broadcast content type: ${content.type}`,
+          permanent: true,
+        },
+      };
+    }
+
+    let data: {
+      status?: number;
+      status_message?: string;
+      message_token?: number;
+      failed_list?: Array<{ receiver?: string; status?: number; status_message?: string }>;
+    };
+    try {
+      data = (await post('/pa/broadcast_message', {
+        broadcast_list: receiverIds,
+        sender,
+        ...body,
+      })) as typeof data;
+    } catch (err) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: now(),
+        error: {
+          code: 'viber_network_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+
+    if (data.status !== 0) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: now(),
+        error: {
+          code: `viber_${data.status ?? 'unknown'}`,
+          message: data.status_message ?? 'Viber rejected the broadcast',
+        },
+      };
+    }
+
+    // A partial failure is the normal case: some subscribers have blocked the
+    // account. Surfacing them lets the caller suppress those ids.
+    const failed = (data.failed_list ?? [])
+      .filter((f) => f.receiver)
+      .map((f) => ({ id: f.receiver!, status: f.status ?? 0 }));
+
+    return {
+      messageId: 'broadcast',
+      ...(data.message_token ? { externalId: String(data.message_token) } : {}),
+      status: failed.length < receiverIds.length ? 'sent' : 'failed',
+      timestamp: now(),
+      ...(failed.length > 0 ? { metadata: { failed } } : {}),
+    };
+  }
+
   return {
     channel: 'viber',
     capabilities: CAPABILITIES,
+    broadcast,
     send,
     handleWebhook,
     verifySignature,

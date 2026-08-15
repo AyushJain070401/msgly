@@ -354,3 +354,69 @@ describe('createViberAdapter', () => {
     if (!result.ok) expect(result.hint).toContain('authToken');
   });
 });
+
+describe('broadcast', () => {
+  it('sends to many subscribers in one call', async () => {
+    const calls = mockApi({ status: 0, message_token: 77, failed_list: [] });
+    const a = createViberAdapter(baseConfig);
+    const receipt = await a.broadcast(['u1', 'u2'], { type: 'text', text: 'Sale' });
+
+    expect(receipt.status).toBe('sent');
+    expect(receipt.externalId).toBe('77');
+    expect(calls[0]!.url).toContain('/pa/broadcast_message');
+
+    const body = JSON.parse(calls[0]!.init!.body as string);
+    expect(body.broadcast_list).toEqual(['u1', 'u2']);
+    expect(body.type).toBe('text');
+  });
+
+  it('surfaces partially failed recipients for suppression', async () => {
+    // Some subscribers block the account — Viber reports them per recipient
+    // rather than failing the whole call.
+    mockApi({
+      status: 0,
+      message_token: 78,
+      failed_list: [{ receiver: 'u2', status: 6, status_message: 'receiverNotSubscribed' }],
+    });
+
+    const receipt = await createViberAdapter(baseConfig).broadcast(['u1', 'u2'], {
+      type: 'text',
+      text: 'x',
+    });
+
+    expect(receipt.status).toBe('sent');
+    expect(receipt.metadata?.failed).toEqual([{ id: 'u2', status: 6 }]);
+  });
+
+  it('reports failure when every recipient failed', async () => {
+    mockApi({
+      status: 0,
+      failed_list: [{ receiver: 'u1', status: 6 }],
+    });
+    const receipt = await createViberAdapter(baseConfig).broadcast(['u1'], {
+      type: 'text',
+      text: 'x',
+    });
+    expect(receipt.status).toBe('failed');
+  });
+
+  it('refuses more than Viber’s 300-receiver limit', async () => {
+    const calls = mockApi({ status: 0 });
+    const receipt = await createViberAdapter(baseConfig).broadcast(
+      Array.from({ length: 301 }, (_, i) => `u${i}`),
+      { type: 'text', text: 'x' },
+    );
+
+    expect(receipt.error?.code).toBe('viber_broadcast_limit');
+    expect(receipt.error?.permanent).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects an empty recipient list', async () => {
+    const receipt = await createViberAdapter(baseConfig).broadcast([], {
+      type: 'text',
+      text: 'x',
+    });
+    expect(receipt.error?.code).toBe('viber_no_recipients');
+  });
+});

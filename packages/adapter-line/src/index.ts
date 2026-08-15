@@ -24,7 +24,32 @@ export interface LineConfig {
 
 export interface LineAdapter extends Adapter {
   readonly channel: 'line';
+  /**
+   * Send to **every** friend of the official account in one call.
+   *
+   * This is LINE's actual campaign primitive — one request regardless of
+   * audience size, rather than fanning out per recipient. It consumes the
+   * monthly message quota of your plan, and cannot be undone or recalled.
+   */
+  broadcast(
+    content: MessageContent,
+    options?: { notificationDisabled?: boolean; retryKey?: string },
+  ): Promise<DeliveryReceipt>;
+  /**
+   * Send to a specific list of user IDs — up to 500 per call, which is LINE's
+   * hard limit. Use this when the audience is a segment rather than everyone.
+   */
+  multicast(
+    userIds: string[],
+    content: MessageContent,
+    options?: { notificationDisabled?: boolean; retryKey?: string },
+  ): Promise<DeliveryReceipt>;
+  /** Remaining messages in this month's quota, or `null` when the plan is unlimited. */
+  getQuotaRemaining(): Promise<number | null>;
 }
+
+/** LINE rejects a multicast with more than 500 recipients outright. */
+export const LINE_MULTICAST_LIMIT = 500;
 
 /**
  * Plain-text formatter for LINE. LINE's Messaging API does not render markdown
@@ -384,6 +409,164 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
     }
   }
 
+  async function postMessages(
+    path: string,
+    payload: Record<string, unknown>,
+    receiptId: string,
+    retryKey?: string,
+  ): Promise<DeliveryReceipt> {
+    let res: Response;
+    try {
+      res = await fetch(`${apiBase()}${path}`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(),
+          // LINE de-duplicates retries carrying the same key, so a network
+          // timeout cannot quietly send a campaign twice.
+          ...(retryKey ? { 'X-Line-Retry-Key': retryKey } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      return {
+        messageId: receiptId,
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'line_network_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+
+    if (res.status >= 200 && res.status < 300) {
+      return {
+        messageId: receiptId,
+        status: 'sent',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    const errorBody = (await res.json().catch(() => ({}))) as { message?: string };
+    return {
+      messageId: receiptId,
+      status: 'failed',
+      timestamp: new Date().toISOString(),
+      error: {
+        code: `line_${res.status}`,
+        message: errorBody.message ?? 'unknown',
+        // 429 is the monthly quota or a rate limit; both clear with time.
+        permanent: res.status >= 400 && res.status < 500 && res.status !== 429,
+      },
+    };
+  }
+
+  async function broadcast(
+    content: MessageContent,
+    options?: { notificationDisabled?: boolean; retryKey?: string },
+  ): Promise<DeliveryReceipt> {
+    let message: Record<string, unknown>;
+    try {
+      message = toLineMessage(content);
+    } catch (err) {
+      return {
+        messageId: 'broadcast',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'line_unsupported_content',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+
+    return postMessages(
+      '/v2/bot/message/broadcast',
+      {
+        messages: [message],
+        ...(options?.notificationDisabled ? { notificationDisabled: true } : {}),
+      },
+      'broadcast',
+      options?.retryKey,
+    );
+  }
+
+  async function multicast(
+    userIds: string[],
+    content: MessageContent,
+    options?: { notificationDisabled?: boolean; retryKey?: string },
+  ): Promise<DeliveryReceipt> {
+    if (userIds.length === 0) {
+      return {
+        messageId: 'multicast',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: { code: 'line_no_recipients', message: 'multicast needs at least one user id' },
+      };
+    }
+    if (userIds.length > LINE_MULTICAST_LIMIT) {
+      return {
+        messageId: 'multicast',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'line_multicast_limit',
+          message:
+            `multicast accepts at most ${LINE_MULTICAST_LIMIT} user ids (got ${userIds.length}). ` +
+            'Split the audience into chunks, or use broadcast() to reach every friend.',
+          permanent: true,
+        },
+      };
+    }
+
+    let message: Record<string, unknown>;
+    try {
+      message = toLineMessage(content);
+    } catch (err) {
+      return {
+        messageId: 'multicast',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: {
+          code: 'line_unsupported_content',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+
+    return postMessages(
+      '/v2/bot/message/multicast',
+      {
+        to: userIds,
+        messages: [message],
+        ...(options?.notificationDisabled ? { notificationDisabled: true } : {}),
+      },
+      'multicast',
+      options?.retryKey,
+    );
+  }
+
+  async function getQuotaRemaining(): Promise<number | null> {
+    const res = await fetch(`${apiBase()}/v2/bot/message/quota/consumption`, {
+      headers: { authorization: `Bearer ${config.channelAccessToken}` },
+    });
+    if (!res.ok) return null;
+    const consumption = (await res.json().catch(() => ({}))) as { totalUsage?: number };
+
+    const quotaRes = await fetch(`${apiBase()}/v2/bot/message/quota`, {
+      headers: { authorization: `Bearer ${config.channelAccessToken}` },
+    });
+    if (!quotaRes.ok) return null;
+    const quota = (await quotaRes.json().catch(() => ({}))) as {
+      type?: string;
+      value?: number;
+    };
+
+    // `none` means an unlimited plan — there is no remaining count to report.
+    if (quota.type === 'none' || quota.value === undefined) return null;
+    return Math.max(0, quota.value - (consumption.totalUsage ?? 0));
+  }
+
   return {
     channel: 'line',
     capabilities: CAPABILITIES,
@@ -394,6 +577,9 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
     downloadMedia,
     verifyCredentials,
     sendTyping,
+    broadcast,
+    multicast,
+    getQuotaRemaining,
   };
 }
 

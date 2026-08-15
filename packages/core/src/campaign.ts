@@ -68,6 +68,10 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   rocketchat: { perSecond: 8, burst: 10 },
   // Google Chat allows ~60 write requests/min per space.
   googlechat: { perSecond: 1, burst: 3 },
+  // SES starts at 14/s in most regions and rises with reputation.
+  ses: { perSecond: 14, burst: 20 },
+  // FCM's HTTP v1 API is generous; the per-project quota binds first.
+  fcm: { perSecond: 50, burst: 100 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

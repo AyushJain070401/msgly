@@ -1,5 +1,7 @@
 # @msgly/twilio-voice
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Twilio Voice adapter for [Msgly](https://github.com/AyushJain070401/msgly) — outbound calls, TwiML, and DTMF gathering.
 
 ```bash

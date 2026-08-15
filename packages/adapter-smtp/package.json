@@ -50,6 +50,10 @@
     "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/adapter-smtp"
   },
+  "homepage": "https://ayushjain070401.github.io/msgly/",
+  "bugs": {
+    "url": "https://github.com/AyushJain070401/msgly/issues"
+  },
   "keywords": [
     "smtp",
     "imap",

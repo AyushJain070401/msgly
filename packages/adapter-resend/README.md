@@ -1,5 +1,7 @@
 # @msgly/resend
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 [Resend](https://resend.com) adapter for [Msgly](https://github.com/AyushJain070401/msgly) — transactional email over plain HTTP.
 
 Unlike `@msgly/smtp`, this one is **Edge-compatible**: it's `fetch` and Web Crypto only, no TCP sockets, so it runs on Vercel Edge, Cloudflare Workers, and Deno.

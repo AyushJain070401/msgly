@@ -2,6 +2,8 @@
 
 > Gmail adapter for [Msgly](https://github.com/AyushJain070401/msgly). Receive new messages as `hub.on('message')` events via Google Cloud Pub/Sub push, send threaded replies via the Gmail REST API. **Built for "agent on email channel" use cases — one bot mailbox, OAuth refresh token, pure WebCrypto.**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Scope (v1)
 
 This release ships **text-only send + receive** for a **single mailbox per adapter** (the bot's own inbox). It is the right shape for shared support inboxes, reply-bots, and agent automations on a dedicated mailbox.

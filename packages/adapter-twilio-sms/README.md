@@ -1,5 +1,7 @@
 # @msgly/twilio-sms
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Twilio SMS/MMS adapter for [Msgly](https://github.com/AyushJain070401/msgly).
 
 ```bash

@@ -2,6 +2,8 @@
 
 > LINE Messaging API adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive LINE messages through the unified hub — text, image, video, audio, location, buttons, and quick replies. Supports LINE's free reply-token sends. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Install
 
 ```bash

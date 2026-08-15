@@ -1,5 +1,7 @@
 # @msgly/vonage-sms
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 Vonage (formerly Nexmo) SMS adapter for [Msgly](https://github.com/AyushJain070401/msgly) — global SMS with signed webhooks.
 
 ```bash

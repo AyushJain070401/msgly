@@ -42,6 +42,10 @@
     "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/core"
   },
+  "homepage": "https://ayushjain070401.github.io/msgly/",
+  "bugs": {
+    "url": "https://github.com/AyushJain070401/msgly/issues"
+  },
   "keywords": [
     "messaging",
     "whatsapp",

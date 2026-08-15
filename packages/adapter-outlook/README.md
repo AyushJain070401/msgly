@@ -2,6 +2,8 @@
 
 > Outlook / Microsoft 365 mail adapter for [Msgly](https://github.com/AyushJain070401/msgly). Receive new messages via Microsoft Graph change-notifications, send threaded replies via `/me/messages/{id}/reply`. **Built for "agent on email channel" use cases — one bot mailbox, OAuth refresh token, pure WebCrypto-free verification (no signing — `clientState` shared secret).**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Scope (v1)
 
 This release ships **text-only send + receive** for a **single mailbox per adapter**. Out of scope (planned):

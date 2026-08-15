@@ -2,6 +2,8 @@
 
 > Microsoft Teams (Bot Framework) adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive Teams messages through the unified hub. **Zero classes, zero runtime deps — pure WebCrypto for JWT verification.**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Install
 
 ```bash

@@ -2,6 +2,8 @@
 
 > Slack Events API adapter for [Msgly](https://github.com/AyushJain070401/msgly). Send and receive Slack messages through the unified hub — text, images, Block Kit buttons, interactive button clicks. **Zero classes, runs in Node, Next.js, and Edge runtimes.**
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 ## Install
 
 ```bash

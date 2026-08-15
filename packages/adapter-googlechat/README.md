@@ -1,5 +1,7 @@
 # @msgly/googlechat
 
+📖 **Docs & channel reference:** [https://ayushjain070401.github.io/msgly/](https://ayushjain070401.github.io/msgly/)
+
 [Google Chat](https://chat.google.com) adapter for [Msgly](https://github.com/AyushJain070401/msgly) — service-account auth with verified Google-signed webhooks.
 
 ```bash

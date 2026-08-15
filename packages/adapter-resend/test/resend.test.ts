@@ -471,3 +471,42 @@ describe('parseAddress', () => {
     expect(parseAddress('bare@example.com')).toEqual({ address: 'bare@example.com' });
   });
 });
+
+describe('List-Unsubscribe', () => {
+  it('emits one-click headers from adapter config', async () => {
+    const calls = mockApi({ id: 'e-1' });
+    const a = createResendAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/u?e={{contact}}', mailto: 'unsub@acme.com' },
+    });
+    await a.send(outbound({ type: 'text', text: 'campaign' }));
+
+    const headers = JSON.parse(calls[0]!.init!.body as string).headers;
+    expect(headers['List-Unsubscribe']).toBe(
+      '<mailto:unsub@acme.com>, <https://acme.com/u?e=alice%40example.com>',
+    );
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+  });
+
+  it('omits the headers entirely when not configured', async () => {
+    const calls = mockApi({ id: 'e-2' });
+    const a = createResendAdapter(baseConfig);
+    await a.send(outbound({ type: 'text', text: 'hi' }));
+    expect(JSON.parse(calls[0]!.init!.body as string).headers).toBeUndefined();
+  });
+
+  it('keeps threading headers alongside unsubscribe headers', async () => {
+    const calls = mockApi({ id: 'e-3' });
+    const a = createResendAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/u' },
+    });
+    await a.send(
+      outbound({ type: 'text', text: 'r' }, { metadata: { messageId: '<o@x.com>' } }),
+    );
+
+    const headers = JSON.parse(calls[0]!.init!.body as string).headers;
+    expect(headers['In-Reply-To']).toBe('<o@x.com>');
+    expect(headers['List-Unsubscribe']).toBe('<https://acme.com/u>');
+  });
+});

@@ -3,6 +3,7 @@ import type {
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
+  UnsubscribeConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   DeliveryStatus,
@@ -12,6 +13,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { buildUnsubscribeHeaders } from '@msgly/core';
 
 export interface SendGridConfig {
   /** API key from app.sendgrid.com → Settings → API Keys (starts with `SG.`). */
@@ -38,6 +40,13 @@ export interface SendGridConfig {
 
   /** Opt in to attachment support. Off by default, like the other email adapters. */
   attachments?: AttachmentsConfig;
+
+  /**
+   * One-click unsubscribe details. Gmail and Yahoo require these headers from
+   * bulk senders — without them, campaign mail is throttled or spam-foldered.
+   * Per-message `metadata.unsubscribeUrl` overrides this.
+   */
+  unsubscribe?: UnsubscribeConfig;
 
   /** Override the API base. Default: `https://api.sendgrid.com`. */
   apiBase?: string;
@@ -473,6 +482,15 @@ export function createSendGridAdapter(config: SendGridConfig): SendGridAdapter {
       };
     }
 
+    const mailHeaders: Record<string, string> = {
+      ...(inReplyTo ? { 'In-Reply-To': inReplyTo, References: inReplyTo } : {}),
+      ...buildUnsubscribeHeaders(
+        message.metadata,
+        config.unsubscribe,
+        message.contact.channelUserId,
+      ),
+    };
+
     const payload: Record<string, unknown> = {
       personalizations: [{ to: [{ email: message.contact.channelUserId }] }],
       from: {
@@ -484,9 +502,7 @@ export function createSendGridAdapter(config: SendGridConfig): SendGridAdapter {
         { type: isHtml ? 'text/html' : 'text/plain', value: message.content.text },
       ],
       ...(attachments.length > 0 ? { attachments } : {}),
-      ...(inReplyTo
-        ? { headers: { 'In-Reply-To': inReplyTo, References: inReplyTo } }
-        : {}),
+      ...(Object.keys(mailHeaders).length > 0 ? { headers: mailHeaders } : {}),
     };
 
     let res: Response;

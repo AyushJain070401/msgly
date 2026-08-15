@@ -57,6 +57,48 @@ Building a chatbot or notification system that works across multiple channels me
 | ------- | ----- |
 | `@msgly/core` | Hub, adapter contract, retries, storage, campaigns |
 
+### Which channels suit campaigns
+
+| Tier | Channels | Notes |
+| --- | --- | --- |
+| **Built for outbound** | SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx | Email and SMS. Honour opt-outs — see below |
+| **Policy-gated** | WhatsApp, Messenger, Instagram | Need approved templates or a 24h window |
+| **Reply-only** | Telegram, Viber, LINE, WeChat | The user must contact you first; no cold outreach |
+| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person |
+
+LinkedIn, X/Twitter DM, and iMessage have **no usable API** for this — LinkedIn's
+messaging API is partner-gated, and automating the web UI violates their terms
+and gets accounts banned.
+
+### Opt-outs are not optional
+
+`sendBulk` consults a `SuppressionStore` before every send. Honouring opt-outs is
+required by TCPA and TRAI/DLT (SMS) and CAN-SPAM and GDPR (email):
+
+```typescript
+import { createHub, createInMemorySuppressionStore, applyConsentIntent } from '@msgly/core';
+
+const suppression = createInMemorySuppressionStore();  // use a KV store in production
+const hub = createHub({ suppressionStore: suppression });
+
+// Capture STOP / UNSUBSCRIBE replies automatically
+hub.on('message', (msg) => applyConsentIntent(msg, suppression));
+
+const result = await hub.sendBulk({ /* ... */ });
+console.log(result.sent, result.skipped);  // skipped = opted out
+```
+
+Suppressed recipients come back as `skipped`, never `failed`, and cost no rate
+limit. If the store is unreachable the send is **skipped rather than sent** —
+not sending is the recoverable mistake.
+
+Email adapters also emit `List-Unsubscribe` headers, which Gmail and Yahoo have
+required from bulk senders since February 2024:
+
+```typescript
+createResendAdapter({ ...cfg, unsubscribe: { url: 'https://acme.com/u?e={{contact}}' } });
+```
+
 Channel names are open — `ChannelName` accepts any string, so you can publish a
 third-party adapter for a channel this repo doesn't ship without waiting on a
 core release. Built-in names keep editor autocomplete.

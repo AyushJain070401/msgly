@@ -3,6 +3,7 @@ import type {
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
+  UnsubscribeConfig,
   CredentialsCheckResult,
   DeliveryReceipt,
   DeliveryStatus,
@@ -12,6 +13,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { buildUnsubscribeHeaders } from '@msgly/core';
 
 export interface ResendConfig {
   /** API key from resend.com/api-keys (starts with `re_`). */
@@ -36,6 +38,13 @@ export interface ResendConfig {
 
   /** Opt in to attachment support. Off by default, like the other email adapters. */
   attachments?: AttachmentsConfig;
+
+  /**
+   * One-click unsubscribe details. Gmail and Yahoo require these headers from
+   * bulk senders — without them, campaign mail is throttled or spam-foldered.
+   * Per-message `metadata.unsubscribeUrl` overrides this.
+   */
+  unsubscribe?: UnsubscribeConfig;
 
   /** Override the API base. Default: `https://api.resend.com`. */
   apiBase?: string;
@@ -421,16 +430,23 @@ export function createResendAdapter(config: ResendConfig): ResendAdapter {
       };
     }
 
+    const headers: Record<string, string> = {
+      // Threading headers must be set explicitly — Resend does not infer them.
+      ...(inReplyTo ? { 'In-Reply-To': inReplyTo, References: inReplyTo } : {}),
+      ...buildUnsubscribeHeaders(
+        message.metadata,
+        config.unsubscribe,
+        message.contact.channelUserId,
+      ),
+    };
+
     const payload: Record<string, unknown> = {
       from: config.from,
       to: [message.contact.channelUserId],
       subject,
       ...(isHtml ? { html: message.content.text } : { text: message.content.text }),
       ...(attachments.length > 0 ? { attachments } : {}),
-      // Threading headers must be set explicitly — Resend does not infer them.
-      ...(inReplyTo
-        ? { headers: { 'In-Reply-To': inReplyTo, References: inReplyTo } }
-        : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
 
     let res: Response;

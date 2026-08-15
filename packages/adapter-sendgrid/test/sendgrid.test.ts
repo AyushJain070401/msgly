@@ -424,3 +424,42 @@ describe('parseAddress', () => {
     expect(parseAddress('a@x.com')).toEqual({ address: 'a@x.com' });
   });
 });
+
+describe('List-Unsubscribe', () => {
+  it('emits one-click headers from adapter config', async () => {
+    const calls = mockSend();
+    const a = createSendGridAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/u?e={{contact}}' },
+    });
+    await a.send(outbound({ type: 'text', text: 'campaign' }));
+
+    const headers = JSON.parse(calls[0]!.init!.body as string).headers;
+    expect(headers['List-Unsubscribe']).toBe('<https://acme.com/u?e=alice%40example.com>');
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+  });
+
+  it('omits the headers when not configured', async () => {
+    const calls = mockSend();
+    const a = createSendGridAdapter(baseConfig);
+    await a.send(outbound({ type: 'text', text: 'hi' }));
+    expect(JSON.parse(calls[0]!.init!.body as string).headers).toBeUndefined();
+  });
+
+  it('lets per-message metadata carry a per-recipient token', async () => {
+    const calls = mockSend();
+    const a = createSendGridAdapter({
+      ...baseConfig,
+      unsubscribe: { url: 'https://acme.com/generic' },
+    });
+    await a.send(
+      outbound({ type: 'text', text: 'x' }, {
+        metadata: { unsubscribeUrl: 'https://acme.com/t/abc123' },
+      }),
+    );
+
+    expect(JSON.parse(calls[0]!.init!.body as string).headers['List-Unsubscribe']).toBe(
+      '<https://acme.com/t/abc123>',
+    );
+  });
+});

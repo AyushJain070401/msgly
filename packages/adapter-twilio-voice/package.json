@@ -1,6 +1,6 @@
 {
   "name": "@msgly/twilio-voice",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Twilio Voice (phone call) adapter for Msgly",
   "license": "MIT",
   "type": "module",

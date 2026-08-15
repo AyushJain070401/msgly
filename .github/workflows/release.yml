@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Never let two releases run at once — a half-finished publish across 26
+# packages is painful to unwind. Queue instead of cancelling, so an in-flight
+# publish is allowed to finish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # commit the version bump, push tags
+      pull-requests: write # open the "Version Packages" PR
+      id-token: write # npm provenance
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Changesets needs history to work out what changed.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Publishing is irreversible — npm forbids reusing a version number — so
+      # everything is verified before changesets is allowed to publish.
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Verify every package has one shared version
+        run: |
+          set -euo pipefail
+          versions=$(node -e "
+            const fs = require('fs');
+            const vs = fs.readdirSync('packages')
+              .map(d => require('./packages/' + d + '/package.json').version);
+            console.log([...new Set(vs)].join(' '));
+          ")
+          count=$(echo "$versions" | wc -w)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Packages have diverging versions: $versions"
+            echo "All @msgly packages must share one version (see 'fixed' in .changeset/config.json)."
+            exit 1
+          fi
+          echo "All packages at $versions"
+
+      # With changesets pending → opens/updates a "Version Packages" PR.
+      # With none pending (that PR was just merged) → publishes to npm.
+      - name: Version or publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          title: 'chore: release'
+          commit: 'chore: release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Links each tarball back to the commit and workflow that built it.
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Summarise
+        if: always()
+        run: |
+          if [ "${{ steps.changesets.outputs.published }}" = "true" ]; then
+            echo "### Published :rocket:" >> "$GITHUB_STEP_SUMMARY"
+            echo '${{ steps.changesets.outputs.publishedPackages }}' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### No publish this run" >> "$GITHUB_STEP_SUMMARY"
+            echo "Either a Version Packages PR was opened/updated, or there was nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          fi

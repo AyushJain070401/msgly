@@ -1,6 +1,6 @@
 {
   "name": "@msgly/viber",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Viber Business Messages adapter for Msgly — rich media, keyboards, signed webhooks",
   "license": "MIT",
   "type": "module",

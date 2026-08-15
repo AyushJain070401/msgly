@@ -28,6 +28,8 @@ export type KnownChannel =
   | 'mattermost'
   | 'rocketchat'
   | 'googlechat'
+  | 'ses'
+  | 'fcm'
   | 'twilio-sms'
   | 'twilio-voice';
 

@@ -1,6 +1,6 @@
 {
   "name": "@msgly/ses",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Amazon SES adapter for Msgly — high-volume email with SigV4 signing and SNS bounce handling",
   "license": "MIT",
   "type": "module",

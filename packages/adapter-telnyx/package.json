@@ -1,6 +1,6 @@
 {
   "name": "@msgly/telnyx",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Telnyx SMS adapter for Msgly — global SMS with Ed25519-signed webhooks",
   "license": "MIT",
   "type": "module",

@@ -18,16 +18,16 @@ Building a chatbot or notification system that works across multiple channels me
 
 | Channel         | Package            | Notes |
 | --------------- | ------------------ | ----- |
-| Telegram        | `@msgly/telegram`  | Bot API, inline keyboards, reactions |
-| WhatsApp        | `@msgly/whatsapp`  | Full Cloud Business API, templates |
-| Messenger       | `@msgly/messenger` | Meta Send API |
-| Instagram       | `@msgly/instagram` | + Instagram Login OAuth |
-| LINE            | `@msgly/line`      | Messaging API, quick replies |
+| Telegram        | `@msgly/telegram`  | Bot API, inline keyboards, reactions; **channel posting via `@name`** |
+| WhatsApp        | `@msgly/whatsapp`  | Full Cloud Business API; **MARKETING templates for campaigns** |
+| Messenger       | `@msgly/messenger` | Meta Send API; **`publishPost()` to the Page feed** |
+| Instagram       | `@msgly/instagram` | Instagram Login OAuth; **`publishPost()` for feed posts and Reels** |
+| LINE            | `@msgly/line`      | Quick replies; **`broadcast()` to all friends, `multicast()` to a segment** |
 | Discord         | `@msgly/discord`   | HTTP Interactions, components |
 | Microsoft Teams | `@msgly/msteams`   | Bot Framework, Adaptive Cards |
 | Slack           | `@msgly/slack`     | Events API + Block Kit |
-| WeChat          | `@msgly/wechat`    | Official Account |
-| **Viber**       | `@msgly/viber`     | **Business Messages, keyboards, signed webhooks** |
+| WeChat          | `@msgly/wechat`    | Official Account; **`massSend()` to all followers or a tag** |
+| **Viber**       | `@msgly/viber`     | **Business Messages, keyboards, signed webhooks, `broadcast()`** |
 | **Mattermost**  | `@msgly/mattermost` | **Self-hosted team chat, REST + outgoing webhooks** |
 | **Rocket.Chat** | `@msgly/rocketchat` | **Self-hosted team chat, REST + outgoing webhooks** |
 | **Google Chat** | `@msgly/googlechat` | **Service-account auth, Google-signed webhook verification** |
@@ -71,10 +71,76 @@ Building a chatbot or notification system that works across multiple channels me
 
 | Tier | Channels | Notes |
 | --- | --- | --- |
-| **Built for outbound** | SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM | Email, SMS and push. Honour opt-outs — see below |
-| **Policy-gated** | WhatsApp, Messenger, Instagram | Need approved templates or a 24h window |
-| **Reply-only** | Telegram, Viber, LINE, WeChat | The user must contact you first; no cold outreach |
-| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person |
+| **Built for outbound** | SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM | Fanned out per recipient by `sendBulk`. Honour opt-outs — see below |
+| **Native broadcast** | LINE, WeChat, Viber, Telegram, FCM topics | One API call reaches the whole audience — no fan-out needed |
+| **Feed publishing** | Instagram, Facebook Pages | `publishPost()` — a post has no recipient, so it sits outside `send()` |
+| **Policy-gated** | WhatsApp | A real campaign channel, but needs approved MARKETING templates and opt-in |
+| **Reply-only DMs** | Messenger, Instagram DMs | 24h window and message tags only; no DM marketing broadcast |
+| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person — post to a channel instead |
+
+### Broadcast: when you don't need fan-out
+
+Four channels have a real broadcast primitive. Reaching 100,000 LINE friends is
+**one request**, not 100,000 — so `sendBulk` is the wrong tool there:
+
+```typescript
+// LINE — every friend, in one call. The retry key makes it safe to retry.
+await line.broadcast({ type: 'text', text: 'Sale starts now' }, { retryKey: 'spring-2026' });
+await line.multicast(segmentIds, { type: 'text', text: 'For you' });  // max 500
+await line.getQuotaRemaining();                                        // plan quota left
+
+// WeChat — all followers or one tag group. Metered at 4/month (Service Account).
+await wechat.massSend({ type: 'text', text: 'New arrivals' }, { tagId: 7 });
+await wechat.massSendToUsers(openIds, { type: 'text', text: 'hi' });   // max 10,000
+
+// Viber — up to 300 per call, with per-recipient failures returned
+const r = await viber.broadcast(ids, { type: 'text', text: 'Sale' });
+r.metadata?.failed;   // [{ id, status }] — feed these to the suppression store
+
+// Telegram — a channel is just another chat id, no new API
+await hub.send({
+  channel: 'telegram',
+  account: { channel: 'telegram', channelAccountId: 'acme_bot' },
+  contact: { channel: 'telegram', channelUserId: '@acme_announcements' },
+  content: { type: 'text', text: 'Shipped v2' },
+});
+```
+
+### Publishing a post
+
+Instagram and Facebook feed posts are **publishing, not messaging** — there's no
+recipient, so they get their own method rather than being forced through `send()`:
+
+```typescript
+await instagram.publishPost({
+  imageUrl: 'https://cdn.acme.com/promo.jpg',   // must be publicly reachable
+  caption: 'Spring sale is live 🌸',
+});
+
+await messenger.publishPost({ message: 'We are hiring', link: 'https://acme.com/jobs' });
+```
+
+Instagram needs a Business/Creator account and caps you at 50 posts per 24h;
+Facebook needs `pages_manage_posts` on the Page token.
+
+### WhatsApp campaigns
+
+WhatsApp *is* a campaign channel — approved MARKETING templates escape the
+24-hour window entirely:
+
+```typescript
+await hub.sendBulk({
+  channel: 'whatsapp',
+  account: { channel: 'whatsapp', channelAccountId: process.env.WA_PHONE_ID! },
+  recipients: contacts.map((contact) => ({ contact })),
+  content: (r) => ({
+    type: 'template',
+    templateName: 'diwali_sale_2026',
+    language: 'en',
+    variables: { '1': r.contact.displayName ?? 'there' },
+  }),
+});
+```
 
 LinkedIn, X/Twitter DM, and iMessage have **no usable API** for this — LinkedIn's
 messaging API is partner-gated, and automating the web UI violates their terms

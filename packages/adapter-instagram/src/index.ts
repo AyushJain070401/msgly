@@ -9,6 +9,12 @@ export interface InstagramConfig extends MetaGraphConfig {
    * `getAuthUrl`, `exchangeCode`, `getLongLivedToken`, `refreshToken`.
    */
   appId?: string;
+  /**
+   * Instagram Business account id, used by `publishPost`. This is the **IG
+   * user id**, not the Facebook Page id — fetch it from
+   * `GET /{page-id}?fields=instagram_business_account`.
+   */
+  igUserId?: string;
 }
 
 export interface InstagramTokenResult {
@@ -18,8 +24,38 @@ export interface InstagramTokenResult {
   expiresIn?: number;
 }
 
+export interface InstagramPostResult {
+  /** The published media id. */
+  id: string;
+  /** The intermediate container id, useful for debugging a failed publish. */
+  containerId: string;
+}
+
 export interface InstagramAdapter extends Adapter {
   readonly channel: 'instagram';
+  /**
+   * Publish a post to the Instagram feed.
+   *
+   * This is **content publishing, not messaging** — a post has no recipient,
+   * so it deliberately sits outside `send()`.
+   *
+   * Instagram requires a two-step flow: create a media container, then publish
+   * it. Both steps are done here. Instagram fetches the image itself, so
+   * `imageUrl` must be publicly reachable — a presigned S3 URL works, a
+   * localhost URL does not.
+   *
+   * Capped by Instagram at **50 posts per rolling 24 hours**, and the account
+   * must be a Business or Creator account linked to a Facebook Page.
+   */
+  publishPost(options: {
+    /** The IG user id (not the Page id). See `igUserId` in the config. */
+    igUserId?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    caption?: string;
+    /** Marks a video container as a Reel rather than a feed video. */
+    isReel?: boolean;
+  }): Promise<InstagramPostResult>;
   /**
    * Build the Instagram Login authorization URL. Direct users here to grant
    * your app access to their Instagram Business account.
@@ -237,10 +273,86 @@ export function createInstagramAdapter(config: InstagramConfig): InstagramAdapte
     };
   }
 
+  async function publishPost(options: {
+    igUserId?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    caption?: string;
+    isReel?: boolean;
+  }): Promise<InstagramPostResult> {
+    const userId = options.igUserId ?? config.igUserId;
+    if (!userId) {
+      throw new Error(
+        'publishPost needs the Instagram user id — pass igUserId, or set it in the adapter config. ' +
+          'It is the IG account id, not the Facebook Page id.',
+      );
+    }
+    if (!options.imageUrl && !options.videoUrl) {
+      throw new Error('publishPost needs either imageUrl or videoUrl.');
+    }
+
+    const base = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v20.0'}`;
+
+    // Step 1 — container. Instagram downloads the media here, so a failure at
+    // this point is almost always an unreachable URL.
+    const containerParams = new URLSearchParams({
+      access_token: config.pageAccessToken,
+      ...(options.imageUrl ? { image_url: options.imageUrl } : {}),
+      ...(options.videoUrl ? { video_url: options.videoUrl } : {}),
+      ...(options.videoUrl ? { media_type: options.isReel ? 'REELS' : 'VIDEO' } : {}),
+      ...(options.caption ? { caption: options.caption } : {}),
+    });
+
+    const containerRes = await fetch(`${base}/${encodeURIComponent(userId)}/media`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: containerParams.toString(),
+    });
+    const container = (await containerRes.json().catch(() => ({}))) as {
+      id?: string;
+      error?: { message?: string; code?: number };
+    };
+
+    if (!containerRes.ok || !container.id) {
+      throw new Error(
+        `Instagram media container failed: ${container.error?.message ?? `HTTP ${containerRes.status}`}. ` +
+          'The media URL must be publicly reachable — Instagram fetches it server-side.',
+      );
+    }
+
+    // Step 2 — publish the container.
+    const publishRes = await fetch(
+      `${base}/${encodeURIComponent(userId)}/media_publish`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          access_token: config.pageAccessToken,
+          creation_id: container.id,
+        }).toString(),
+      },
+    );
+    const published = (await publishRes.json().catch(() => ({}))) as {
+      id?: string;
+      error?: { message?: string };
+    };
+
+    if (!publishRes.ok || !published.id) {
+      throw new Error(
+        `Instagram publish failed: ${published.error?.message ?? `HTTP ${publishRes.status}`}. ` +
+          `Container ${container.id} was created but not published — video containers need a few ` +
+          'seconds to finish processing before publish succeeds.',
+      );
+    }
+
+    return { id: published.id, containerId: container.id };
+  }
+
   return {
     channel: 'instagram',
     capabilities: CAPABILITIES,
     ...base,
+    publishPost,
     getAuthUrl,
     exchangeCode,
     getLongLivedToken,

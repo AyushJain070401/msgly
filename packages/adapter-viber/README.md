@@ -58,6 +58,31 @@ and a `platform-id` reference fails fast with a clear message.
 Supported: images (`picture`), video, and files. Audio has no send type in the
 messages API, so `capabilities.media.audio` is `false`.
 
+## Broadcast
+
+Send one message to many subscribers in a single call — **max 300 receivers**:
+
+```typescript
+const receipt = await viber.broadcast(subscriberIds, {
+  type: 'text',
+  text: 'Sale starts now',
+});
+```
+
+Viber reports **per-recipient** outcomes rather than failing the whole call, so
+a partial failure is the normal case — some subscribers will have blocked the
+account. Those ids come back ready to retire:
+
+```typescript
+for (const { id } of receipt.metadata?.failed ?? []) {
+  await suppression.suppress('viber', id, { source: 'bounce' });
+}
+```
+
+The receipt is `sent` when *any* recipient succeeded, and `failed` only when
+every one did. Split larger audiences into chunks of 300 — going over returns a
+permanent `viber_broadcast_limit` rather than a truncated send.
+
 ## License
 
 MIT

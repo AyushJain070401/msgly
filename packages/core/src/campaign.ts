@@ -72,6 +72,8 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   ses: { perSecond: 14, burst: 20 },
   // FCM's HTTP v1 API is generous; the per-project quota binds first.
   fcm: { perSecond: 50, burst: 100 },
+  // Reddit's free OAuth tier is ~100 queries/minute, and it enforces hard.
+  reddit: { perSecond: 1, burst: 2 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

@@ -30,6 +30,7 @@ export type KnownChannel =
   | 'googlechat'
   | 'ses'
   | 'fcm'
+  | 'reddit'
   | 'twilio-sms'
   | 'twilio-voice';
 

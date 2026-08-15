@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, Reddit, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
@@ -55,6 +55,12 @@ Building a chatbot or notification system that works across multiple channels me
 | **Telnyx**   | `@msgly/telnyx`       | **Global SMS + MMS, Ed25519-signed webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
 
+### Publishing
+
+| Channel | Package | Notes |
+| ------- | ------- | ----- |
+| **Reddit** | `@msgly/reddit` | **Subreddit posts, thread replies, inbox polling** |
+
 ### Push
 
 | Channel | Package | Notes |
@@ -73,7 +79,7 @@ Building a chatbot or notification system that works across multiple channels me
 | --- | --- | --- |
 | **Built for outbound** | SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM | Fanned out per recipient by `sendBulk`. Honour opt-outs — see below |
 | **Native broadcast** | LINE, WeChat, Viber, Telegram, FCM topics | One API call reaches the whole audience — no fan-out needed |
-| **Feed publishing** | Instagram, Facebook Pages | `publishPost()` — a post has no recipient, so it sits outside `send()` |
+| **Feed publishing** | Instagram, Facebook Pages, Reddit | `publishPost()` — a post has no recipient, so it sits outside `send()` |
 | **Policy-gated** | WhatsApp | A real campaign channel, but needs approved MARKETING templates and opt-in |
 | **Reply-only DMs** | Messenger, Instagram DMs | 24h window and message tags only; no DM marketing broadcast |
 | **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person — post to a channel instead |
@@ -142,9 +148,15 @@ await hub.sendBulk({
 });
 ```
 
-LinkedIn, X/Twitter DM, and iMessage have **no usable API** for this — LinkedIn's
-messaging API is partner-gated, and automating the web UI violates their terms
-and gets accounts banned.
+**Not viable, and why.** LinkedIn's messaging API is partner-gated; Quora has no
+public write API at all (only an Ads API); X/Twitter DMs sit behind expensive
+paid tiers; Medium froze its publishing API to new integrations; iMessage has no
+API. Automating any of them means scraping, which violates their terms and gets
+accounts banned — so they are deliberately absent rather than overlooked.
+
+Reddit **is** supported, but note it ships no bulk-DM helper: unsolicited mass
+DMs are spam under Reddit's content policy and get accounts shadowbanned. Post
+to a subreddit and reply to inbound instead.
 
 ### Opt-outs are not optional
 

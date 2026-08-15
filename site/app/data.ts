@@ -1,7 +1,7 @@
 export type Channel = {
   name: string;
   pkg: string;
-  category: 'Chat & social' | 'Email' | 'SMS & voice' | 'Push' | 'Core';
+  category: 'Chat & social' | 'Email' | 'SMS & voice' | 'Push' | 'Publishing' | 'Core';
   notes: string;
   campaign: 'Outbound' | 'Broadcast' | 'Policy-gated' | 'Reply-only' | 'Not for campaigns' | '—';
 };
@@ -36,12 +36,14 @@ export const channels: Channel[] = [
   { name: 'Telnyx', pkg: '@msgly/telnyx', category: 'SMS & voice', notes: 'Global SMS and MMS, Ed25519-signed webhooks', campaign: 'Outbound' },
   { name: 'Twilio Voice', pkg: '@msgly/twilio-voice', category: 'SMS & voice', notes: 'TwiML flows, Gather input and outbound calls', campaign: '—' },
 
+  { name: 'Reddit', pkg: '@msgly/reddit', category: 'Publishing', notes: 'Subreddit posts, thread replies and inbox polling', campaign: 'Broadcast' },
+
   { name: 'FCM', pkg: '@msgly/fcm', category: 'Push', notes: 'Push to Android, iOS and web, plus topic broadcast', campaign: 'Outbound' },
 
   { name: 'Core', pkg: '@msgly/core', category: 'Core', notes: 'Hub, adapter contract, retries, storage, campaigns', campaign: '—' },
 ];
 
-export const categories = ['All', 'Chat & social', 'Email', 'SMS & voice', 'Push', 'Core'] as const;
+export const categories = ['All', 'Chat & social', 'Email', 'SMS & voice', 'Push', 'Publishing', 'Core'] as const;
 
 export const features = [
   {
@@ -179,7 +181,7 @@ console.log(result.sent, result.skipped); // skipped = opted out`;
 export const campaignTiers = [
   { tier: 'Built for outbound', tone: 'good', channels: 'SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM', note: 'Email, SMS and push, fanned out per recipient. Honour opt-outs.' },
   { tier: 'Native broadcast', tone: 'good', channels: 'LINE, WeChat, Viber, Telegram, FCM topics', note: 'One API call reaches the whole audience — no per-recipient fan-out.' },
-  { tier: 'Feed publishing', tone: 'good', channels: 'Instagram, Facebook Pages', note: 'publishPost() puts a post on the feed. No recipient, so it sits outside send().' },
+  { tier: 'Feed publishing', tone: 'good', channels: 'Instagram, Facebook Pages, Reddit', note: 'publishPost() puts a post on the feed. No recipient, so it sits outside send().' },
   { tier: 'Policy-gated', tone: 'warn', channels: 'WhatsApp', note: 'Real campaign channel, but needs approved MARKETING templates and opt-in.' },
   { tier: 'Reply-only DMs', tone: 'warn', channels: 'Messenger, Instagram DMs', note: '24h window and message tags only — no DM marketing broadcast.' },
   { tier: 'Not campaign channels', tone: 'bad', channels: 'Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat', note: 'The recipient is a room, not a person. Post to a channel instead.' },

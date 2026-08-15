@@ -1,7 +1,7 @@
 {
   "name": "@msgly/plivo",
   "version": "1.1.0",
-  "description": "Plivo SMS adapter for Msgly — global SMS with V3 signature verification",
+  "description": "Plivo SMS adapter for Msgly \u2014 global SMS with V3 signature verification",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -43,6 +43,10 @@
     "type": "git",
     "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/adapter-plivo"
+  },
+  "homepage": "https://ayushjain070401.github.io/msgly/",
+  "bugs": {
+    "url": "https://github.com/AyushJain070401/msgly/issues"
   },
   "keywords": [
     "plivo",

@@ -39,6 +39,13 @@ coverage/
 .eslintcache
 .parcel-cache/
 
+# Next.js (site/)
+.next/
+site/out/
+
 # This repo is pnpm-only — an npm lockfile here causes wrong installs.
 package-lock.json
 yarn.lock
+
+# ...except site/, which is a standalone npm app deployed by the Pages workflow.
+!site/package-lock.json

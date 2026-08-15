@@ -1,7 +1,7 @@
 {
   "name": "@msgly/mattermost",
   "version": "1.1.0",
-  "description": "Mattermost adapter for Msgly — self-hosted team chat via REST + outgoing webhooks",
+  "description": "Mattermost adapter for Msgly \u2014 self-hosted team chat via REST + outgoing webhooks",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -43,6 +43,10 @@
     "type": "git",
     "url": "https://github.com/AyushJain070401/msgly.git",
     "directory": "packages/adapter-mattermost"
+  },
+  "homepage": "https://ayushjain070401.github.io/msgly/",
+  "bugs": {
+    "url": "https://github.com/AyushJain070401/msgly/issues"
   },
   "keywords": [
     "mattermost",

@@ -53,18 +53,26 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Only meaningful on the publish path. With changesets pending, the very
+      # next step normalises the whole fixed group — enforcing parity here
+      # would block the tool that fixes it. CI enforces parity on every PR, so
+      # divergence is caught before it reaches main.
       - name: Verify every package has one shared version
         run: |
           set -euo pipefail
+          pending=$(find .changeset -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          if [ "$pending" -ne 0 ]; then
+            echo "$pending changeset(s) pending — changesets will align the group. Skipping."
+            exit 0
+          fi
           versions=$(node -e "
             const fs = require('fs');
             const vs = fs.readdirSync('packages')
               .map(d => require('./packages/' + d + '/package.json').version);
             console.log([...new Set(vs)].join(' '));
           ")
-          count=$(echo "$versions" | wc -w)
-          if [ "$count" -ne 1 ]; then
-            echo "::error::Packages have diverging versions: $versions"
+          if [ "$(echo "$versions" | wc -w)" -ne 1 ]; then
+            echo "::error::About to publish diverging versions: $versions"
             echo "All @msgly packages must share one version (see 'fixed' in .changeset/config.json)."
             exit 1
           fi

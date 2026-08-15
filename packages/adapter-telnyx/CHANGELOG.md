@@ -1,5 +1,12 @@
 # @msgly/telnyx
 
+## 1.3.0
+
+### Patch Changes
+
+- Updated dependencies [f88b420]
+  - @msgly/core@1.3.0
+
 ## 1.2.0
 
 ### Patch Changes

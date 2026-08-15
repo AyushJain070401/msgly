@@ -1,5 +1,23 @@
 # express-basic
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [856cf52]
+- Updated dependencies [f88b420]
+- Updated dependencies [7d766e2]
+  - @msgly/line@1.3.0
+  - @msgly/instagram@1.3.0
+  - @msgly/messenger@1.3.0
+  - @msgly/core@1.3.0
+  - @msgly/whatsapp@1.3.0
+  - @msgly/telegram@1.3.0
+  - @msgly/discord@1.3.0
+  - @msgly/gmail@1.3.0
+  - @msgly/msteams@1.3.0
+  - @msgly/outlook@1.3.0
+
 ## 0.1.4
 
 ### Patch Changes

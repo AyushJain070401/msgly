@@ -16,7 +16,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
@@ -51,5 +52,8 @@
     "bot",
     "chatbot",
     "webhook"
-  ]
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

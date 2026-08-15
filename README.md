@@ -126,7 +126,7 @@ If you've never used this library before, do this first. It uses Telegram (the e
 **1. Get the code and install:**
 
 ```bash
-unzip msgly.zip
+git clone https://github.com/AyushJain070401/msgly.git
 cd msgly
 pnpm install
 pnpm build

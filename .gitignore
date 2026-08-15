@@ -38,3 +38,7 @@ coverage/
 .cache/
 .eslintcache
 .parcel-cache/
+
+# This repo is pnpm-only — an npm lockfile here causes wrong installs.
+package-lock.json
+yarn.lock

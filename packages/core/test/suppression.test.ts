@@ -6,7 +6,9 @@ import {
   createBulkRunner,
   createInMemorySuppressionStore,
   createKvSuppressionStore,
+  applyDeliveryReceipt,
   detectConsentIntent,
+  shouldSuppressReceipt,
   partitionSuppressed,
   type BulkSendOptions,
   type InboundMessage,
@@ -338,5 +340,116 @@ describe('buildUnsubscribeHeaders', () => {
         { url: 'https://acme.com/generic' },
       )['List-Unsubscribe'],
     ).toBe('<https://acme.com/token/xyz>');
+  });
+});
+
+describe('shouldSuppressReceipt', () => {
+  const base = {
+    messageId: 'm-1',
+    recipientId: 'alice@example.com',
+    timestamp: '2026-01-01T10:00:00.000Z',
+  };
+
+  it('suppresses on a permanent failure', () => {
+    const reason = shouldSuppressReceipt({
+      ...base,
+      status: 'failed',
+      error: { code: 'bounce', message: '550 no such user', permanent: true },
+    });
+    expect(reason).toMatchObject({ source: 'bounce', at: base.timestamp });
+    expect(reason!.detail).toContain('550 no such user');
+  });
+
+  it('suppresses on a complaint', () => {
+    expect(
+      shouldSuppressReceipt({
+        ...base,
+        status: 'failed',
+        error: { code: 'spamreport', message: 'spam', complaint: true },
+      })!.source,
+    ).toBe('complaint');
+  });
+
+  it('does NOT suppress a transient failure', () => {
+    // A deferral or full mailbox means try later, not "this address is dead".
+    expect(
+      shouldSuppressReceipt({
+        ...base,
+        status: 'failed',
+        error: { code: 'deferred', message: 'mailbox full', permanent: false },
+      }),
+    ).toBeNull();
+  });
+
+  it('does NOT suppress when the adapter could not classify the failure', () => {
+    // Wrongly suppressing a deliverable address is worse than a wasted retry.
+    expect(
+      shouldSuppressReceipt({
+        ...base,
+        status: 'failed',
+        error: { code: 'unknown', message: 'something went wrong' },
+      }),
+    ).toBeNull();
+  });
+
+  it('ignores successful receipts', () => {
+    expect(shouldSuppressReceipt({ ...base, status: 'delivered' })).toBeNull();
+    expect(shouldSuppressReceipt({ ...base, status: 'sent' })).toBeNull();
+  });
+});
+
+describe('applyDeliveryReceipt', () => {
+  it('suppresses the recipient on a hard bounce', async () => {
+    const store = createInMemorySuppressionStore();
+    const applied = await applyDeliveryReceipt(
+      {
+        messageId: 'm-1',
+        recipientId: 'dead@example.com',
+        status: 'failed',
+        timestamp: '2026-01-01T10:00:00.000Z',
+        error: { code: 'bounce', message: '550', permanent: true },
+      },
+      'resend',
+      store,
+    );
+
+    expect(applied).toBe(true);
+    expect(await store.isSuppressed('resend', 'dead@example.com')).toBe(true);
+    expect(store.list()[0]!.reason.source).toBe('bounce');
+  });
+
+  it('leaves transient failures alone', async () => {
+    const store = createInMemorySuppressionStore();
+    const applied = await applyDeliveryReceipt(
+      {
+        messageId: 'm-1',
+        recipientId: 'busy@example.com',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: { code: 'deferred', message: 'try later', permanent: false },
+      },
+      'resend',
+      store,
+    );
+
+    expect(applied).toBe(false);
+    expect(await store.isSuppressed('resend', 'busy@example.com')).toBe(false);
+  });
+
+  it('ignores receipts with no identifiable recipient', async () => {
+    const store = createInMemorySuppressionStore();
+    const applied = await applyDeliveryReceipt(
+      {
+        messageId: 'm-1',
+        status: 'failed',
+        timestamp: new Date().toISOString(),
+        error: { code: 'bounce', message: '550', permanent: true },
+      },
+      'resend',
+      store,
+    );
+
+    expect(applied).toBe(false);
+    expect(store.list()).toHaveLength(0);
   });
 });

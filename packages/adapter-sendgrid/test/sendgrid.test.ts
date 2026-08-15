@@ -463,3 +463,36 @@ describe('List-Unsubscribe', () => {
     );
   });
 });
+
+describe('bounce classification', () => {
+  function receiptFor(item: Record<string, unknown>) {
+    return createSendGridAdapter(baseConfig).parseDeliveryEvents({
+      headers: {},
+      rawBody: encode(''),
+      query: {},
+      body: [{ sg_message_id: 'm1', email: 'a@x.com', ...item }],
+    })[0]!;
+  }
+
+  it('treats a hard bounce as permanent', () => {
+    expect(receiptFor({ event: 'bounce', type: 'bounce' }).error!.permanent).toBe(true);
+    // SendGrid omits `type` on a plain hard bounce.
+    expect(receiptFor({ event: 'bounce' }).error!.permanent).toBe(true);
+  });
+
+  it('treats a block as transient, not a dead address', () => {
+    // SendGrid reports blocks through the same `bounce` event — only `type`
+    // separates them, and suppressing a block would drop a good recipient.
+    expect(receiptFor({ event: 'bounce', type: 'blocked' }).error!.permanent).toBe(false);
+    expect(receiptFor({ event: 'blocked' }).error!.permanent).toBe(false);
+    expect(receiptFor({ event: 'deferred' }).error!.permanent).toBe(false);
+  });
+
+  it('treats dropped and spamreport as permanent', () => {
+    expect(receiptFor({ event: 'dropped' }).error!.permanent).toBe(true);
+    expect(receiptFor({ event: 'spamreport' }).error).toMatchObject({
+      permanent: true,
+      complaint: true,
+    });
+  });
+});

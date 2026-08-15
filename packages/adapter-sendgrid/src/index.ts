@@ -177,6 +177,34 @@ export function derToP1363(der: Uint8Array, size = 32): Uint8Array | null {
   return out;
 }
 
+
+/**
+ * Distinguish a dead address from a temporary problem.
+ *
+ * SendGrid reports both through the `bounce` event and separates them with a
+ * `type` field: `"bounce"` is a hard bounce, `"blocked"` is the receiving
+ * server temporarily refusing us. Treating a block as permanent would suppress
+ * recipients whose addresses are fine.
+ */
+function isPermanentFailure(item: Record<string, unknown>): boolean {
+  const event = String(item['event'] ?? '');
+  switch (event) {
+    case 'bounce':
+      // Absent `type`, SendGrid's default for this event is a hard bounce.
+      return item['type'] === undefined || item['type'] === 'bounce';
+    case 'dropped':
+      // SendGrid drops mail it already knows is undeliverable.
+      return true;
+    case 'spamreport':
+      return true;
+    case 'deferred':
+    case 'blocked':
+      return false;
+    default:
+      return false;
+  }
+}
+
 /** Map SendGrid event names onto the unified delivery statuses. */
 export function mapSendGridEvent(event: string | undefined): DeliveryStatus | null {
   switch (event) {
@@ -318,6 +346,8 @@ export function createSendGridAdapter(config: SendGridConfig): SendGridAdapter {
               error: {
                 code: String(item['event']),
                 message: String(item['reason'] ?? item['event']),
+                permanent: isPermanentFailure(item),
+                ...(item['event'] === 'spamreport' ? { complaint: true } : {}),
               },
             }
           : {}),

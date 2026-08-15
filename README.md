@@ -92,6 +92,20 @@ Suppressed recipients come back as `skipped`, never `failed`, and cost no rate
 limit. If the store is unreachable the send is **skipped rather than sent** —
 not sending is the recoverable mistake.
 
+Hard bounces and spam complaints suppress automatically, so the list cleans
+itself:
+
+```typescript
+import { applyDeliveryReceipt } from '@msgly/core';
+
+hub.on('delivery', (receipt) => applyDeliveryReceipt(receipt, 'resend', suppression));
+```
+
+Only **permanent** failures suppress. A deferral, a full mailbox, or a
+temporary block is left alone — and when an adapter cannot tell, nothing is
+suppressed, because wrongly dropping a deliverable address is worse than a
+wasted retry.
+
 Email adapters also emit `List-Unsubscribe` headers, which Gmail and Yahoo have
 required from bulk senders since February 2024:
 

@@ -510,3 +510,31 @@ describe('List-Unsubscribe', () => {
     expect(headers['List-Unsubscribe']).toBe('<https://acme.com/u>');
   });
 });
+
+describe('bounce classification', () => {
+  const a = () => createResendAdapter(baseConfig);
+  const event = (type: string) => ({
+    headers: {},
+    rawBody: encode(''),
+    query: {},
+    body: { type, data: { email_id: 'e-1', to: ['a@x.com'] } },
+  });
+
+  it('marks a bounce and a complaint as permanent', () => {
+    expect(a().parseDeliveryEvent(event('email.bounced'))!.error).toMatchObject({
+      permanent: true,
+    });
+    expect(a().parseDeliveryEvent(event('email.complained'))!.error).toMatchObject({
+      permanent: true,
+      complaint: true,
+    });
+  });
+
+  it('marks a delayed delivery as transient', () => {
+    // A retry is not a dead address — suppressing here would lose a real
+    // recipient.
+    expect(
+      a().parseDeliveryEvent(event('email.delivery_delayed'))!.error!.permanent,
+    ).toBe(false);
+  });
+});

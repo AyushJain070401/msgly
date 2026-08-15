@@ -1,4 +1,9 @@
-import type { ChannelName, ContactRef, InboundMessage } from './types.js';
+import type {
+  ChannelName,
+  ContactRef,
+  DeliveryReceipt,
+  InboundMessage,
+} from './types.js';
 
 /**
  * Opt-out tracking.
@@ -225,6 +230,66 @@ export async function applyConsentIntent(
     await store.unsuppress(channel, channelUserId);
   }
   return intent;
+}
+
+// ---------- Bounces and complaints ----------
+
+/**
+ * Decide whether a delivery receipt should suppress the recipient.
+ *
+ * Only **permanent** failures and spam complaints qualify. A transient failure
+ * — a full mailbox, a deferral, a rate limit — must never suppress: the
+ * address is probably fine, and suppressing it silently loses a real
+ * recipient. When an adapter cannot tell (`permanent` undefined), this returns
+ * `null`, because wrongly suppressing a deliverable address is worse than
+ * retrying a dead one.
+ */
+export function shouldSuppressReceipt(
+  receipt: DeliveryReceipt,
+): SuppressionReason | null {
+  if (receipt.status !== 'failed' || !receipt.error) return null;
+
+  if (receipt.error.complaint === true) {
+    return {
+      source: 'complaint',
+      detail: `${receipt.error.code}: ${receipt.error.message}`,
+      at: receipt.timestamp,
+    };
+  }
+  if (receipt.error.permanent === true) {
+    return {
+      source: 'bounce',
+      detail: `${receipt.error.code}: ${receipt.error.message}`,
+      at: receipt.timestamp,
+    };
+  }
+  return null;
+}
+
+/**
+ * Suppress a recipient when a receipt reports a hard bounce or a complaint.
+ *
+ * Wire this into your delivery handling so the list cleans itself:
+ *
+ * ```ts
+ * hub.on('delivery', (receipt) =>
+ *   applyDeliveryReceipt(receipt, 'resend', suppression),
+ * );
+ * ```
+ *
+ * Returns `true` when the recipient was suppressed. Receipts without a
+ * `recipientId` are ignored — there is nobody identifiable to suppress.
+ */
+export async function applyDeliveryReceipt(
+  receipt: DeliveryReceipt,
+  channel: ChannelName,
+  store: SuppressionStore,
+): Promise<boolean> {
+  const reason = shouldSuppressReceipt(receipt);
+  if (!reason || !receipt.recipientId) return false;
+
+  await store.suppress(channel, receipt.recipientId, reason);
+  return true;
 }
 
 // ---------- List-Unsubscribe ----------

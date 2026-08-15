@@ -277,7 +277,16 @@ export function createResendAdapter(config: ResendConfig): ResendAdapter {
       timestamp: body.created_at ?? new Date().toISOString(),
       ...(body.data.to?.[0] ? { recipientId: body.data.to[0] } : {}),
       ...(status === 'failed'
-        ? { error: { code: body.type ?? 'email.bounced', message: body.type ?? 'delivery failed' } }
+        ? {
+            error: {
+              code: body.type ?? 'email.bounced',
+              message: body.type ?? 'delivery failed',
+              // `delivery_delayed` is a retry, not a dead address — marking it
+              // permanent would suppress recipients who are perfectly fine.
+              permanent: body.type === 'email.bounced' || body.type === 'email.complained',
+              ...(body.type === 'email.complained' ? { complaint: true } : {}),
+            },
+          }
         : {}),
     };
   }

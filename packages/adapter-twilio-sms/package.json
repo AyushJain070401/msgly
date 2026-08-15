@@ -1,6 +1,6 @@
 {
   "name": "@msgly/twilio-sms",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Twilio SMS adapter for Msgly",
   "license": "MIT",
   "type": "module",

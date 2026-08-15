@@ -1,5 +1,12 @@
 # @msgly/discord
 
+## 1.4.0
+
+### Patch Changes
+
+- Updated dependencies [27fa311]
+  - @msgly/core@1.4.0
+
 ## 1.3.0
 
 ### Patch Changes

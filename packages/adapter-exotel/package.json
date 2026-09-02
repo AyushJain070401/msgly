@@ -1,6 +1,6 @@
 {
   "name": "@msgly/exotel",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Exotel SMS adapter for Msgly — India-focused SMS with DLT compliance",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, Reddit, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, Reddit, TikTok, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
@@ -60,6 +60,7 @@ Building a chatbot or notification system that works across multiple channels me
 | Channel | Package | Notes |
 | ------- | ------- | ----- |
 | **Reddit** | `@msgly/reddit` | **Subreddit posts, thread replies, inbox polling** |
+| **TikTok** | `@msgly/tiktok` | **Video and photo publishing, comment replies, DMs** |
 
 ### Push
 
@@ -79,7 +80,7 @@ Building a chatbot or notification system that works across multiple channels me
 | --- | --- | --- |
 | **Built for outbound** | SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM | Fanned out per recipient by `sendBulk`. Honour opt-outs — see below |
 | **Native broadcast** | LINE, WeChat, Viber, Telegram, FCM topics | One API call reaches the whole audience — no fan-out needed |
-| **Feed publishing** | Instagram, Facebook Pages, Reddit | `publishPost()` — a post has no recipient, so it sits outside `send()` |
+| **Feed publishing** | Instagram, Facebook Pages, Reddit, TikTok | `publishPost()` — a post has no recipient, so it sits outside `send()` |
 | **Policy-gated** | WhatsApp | A real campaign channel, but needs approved MARKETING templates and opt-in |
 | **Reply-only DMs** | Messenger, Instagram DMs | 24h window and message tags only; no DM marketing broadcast |
 | **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person — post to a channel instead |

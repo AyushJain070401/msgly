@@ -31,6 +31,7 @@ export type KnownChannel =
   | 'ses'
   | 'fcm'
   | 'reddit'
+  | 'tiktok'
   | 'twilio-sms'
   | 'twilio-voice';
 

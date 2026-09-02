@@ -74,6 +74,9 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   fcm: { perSecond: 50, burst: 100 },
   // Reddit's free OAuth tier is ~100 queries/minute, and it enforces hard.
   reddit: { perSecond: 1, burst: 2 },
+  // TikTok's Content Posting API is quota'd per app per day; the per-second
+  // ceiling is generous, but posting is async so bursting buys nothing.
+  tiktok: { perSecond: 2, burst: 4 },
   // Long codes are 1 msg/s. Short codes and toll-free are much higher —
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },

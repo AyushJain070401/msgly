@@ -1,6 +1,6 @@
 {
   "name": "@msgly/msg91",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "MSG91 SMS adapter for Msgly — India SMS via the DLT Flow API",
   "license": "MIT",
   "type": "module",

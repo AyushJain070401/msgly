@@ -1,6 +1,6 @@
 {
   "name": "@msgly/outlook",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Outlook / Microsoft 365 mail adapter for Msgly — receive and reply via Microsoft Graph",
   "license": "MIT",
   "type": "module",

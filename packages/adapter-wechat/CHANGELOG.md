@@ -1,5 +1,12 @@
 # @msgly/wechat
 
+## 1.5.0
+
+### Patch Changes
+
+- Updated dependencies [1d98daa]
+  - @msgly/core@1.5.0
+
 ## 1.4.0
 
 ### Patch Changes

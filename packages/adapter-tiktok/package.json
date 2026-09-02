@@ -1,6 +1,6 @@
 {
   "name": "@msgly/tiktok",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "TikTok adapter for Msgly — video and photo publishing, comment replies and direct messages",
   "license": "MIT",
   "type": "module",

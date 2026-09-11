@@ -1,5 +1,11 @@
 # @msgly/msg91
 
+## 1.7.0
+
+### Patch Changes
+
+- @msgly/core@1.7.0
+
 ## 1.6.0
 
 ### Patch Changes

@@ -18,7 +18,7 @@ export interface MetaGraphConfig {
   verifyToken: string;
   /** Override for tests. Defaults to https://graph.facebook.com. */
   apiBase?: string;
-  /** Graph API version, defaults to v20.0. */
+  /** Graph API version, defaults to v23.0. */
   apiVersion?: string;
 }
 
@@ -139,7 +139,7 @@ export function createMetaGraphBase(
   options: MetaGraphBaseOptions = {},
 ): MetaGraphBase {
   const apiBase = (): string => config.apiBase ?? GRAPH_API;
-  const apiVersion = (): string => config.apiVersion ?? 'v20.0';
+  const apiVersion = (): string => config.apiVersion ?? 'v23.0';
   const sendUrl = (): string => `${apiBase()}/${apiVersion()}/me/messages`;
 
   const toMeta =

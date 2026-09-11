@@ -657,3 +657,74 @@ describe('hub.sendBulk', () => {
     expect(sentMessage.metadata).toEqual({ campaign: 'spring-sale', crmId: 'c-1' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// list / cta_url are opt-in: adapters that do not advertise them must be
+// rejected by the hub rather than handed content they cannot render.
+// ---------------------------------------------------------------------------
+
+describe('list and cta_url capability gating', () => {
+  const listContent = {
+    type: 'list' as const,
+    text: 'Pick one',
+    buttonLabel: 'Open',
+    sections: [{ rows: [{ id: 'a', title: 'A' }] }],
+  };
+  const ctaContent = {
+    type: 'cta_url' as const,
+    text: 'Receipt ready',
+    buttonLabel: 'View',
+    url: 'https://example.com',
+  };
+  const envelope = {
+    channel: 'telegram' as const,
+    account: { channel: 'telegram' as const, channelAccountId: 'self' },
+    contact: { channel: 'telegram' as const, channelUserId: '123' },
+  };
+
+  it('rejects list content when the adapter omits the capability', async () => {
+    const hub = createHub();
+    hub.register(createFakeAdapter());
+    await expect(
+      hub.send({ ...envelope, content: listContent }),
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'UnsupportedFeature'));
+  });
+
+  it('rejects cta_url content when the adapter omits the capability', async () => {
+    const hub = createHub();
+    hub.register(createFakeAdapter());
+    await expect(
+      hub.send({ ...envelope, content: ctaContent }),
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'UnsupportedFeature'));
+  });
+
+  it('passes list and cta_url through once the adapter opts in', async () => {
+    const hub = createHub();
+    const adapter = createFakeAdapter();
+    adapter.capabilities.interactive.lists = true;
+    adapter.capabilities.interactive.ctaUrl = true;
+    hub.register(adapter);
+
+    await expect(hub.send({ ...envelope, content: listContent })).resolves.toMatchObject({
+      status: 'sent',
+    });
+    await expect(hub.send({ ...envelope, content: ctaContent })).resolves.toMatchObject({
+      status: 'sent',
+    });
+  });
+
+  it('forwards replyTo to the adapter untouched', async () => {
+    const hub = createHub();
+    const adapter = createFakeAdapter();
+    hub.register(adapter);
+
+    await hub.send({
+      ...envelope,
+      content: { type: 'text', text: 'hi' },
+      replyTo: 'parent-123',
+    });
+
+    const sent = (adapter.send as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(sent.replyTo).toBe('parent-123');
+  });
+});

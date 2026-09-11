@@ -31,6 +31,16 @@ export interface WhatsAppConfig {
    * (Resumable Upload API) and token introspection (debugToken).
    */
   appId?: string;
+  /**
+   * Set when this number runs Coexistence — the WhatsApp Business *app* and the
+   * Cloud API on the same number at once.
+   *
+   * It does not switch the API on (that happens during Embedded Signup); it
+   * tells the adapter to advertise the 20 messages/second ceiling Meta applies
+   * to dual-platform numbers, so `sendBulk` paces to the real limit instead of
+   * the higher API-only default.
+   */
+  coexistence?: boolean;
   /** Override for tests. */
   apiBase?: string;
   apiVersion?: string;
@@ -96,6 +106,89 @@ export interface WhatsAppTokenInfo {
    * Facebook Embedded Signup without requiring the user to enter it manually.
    */
   granularScopes?: Array<{ scope: string; targetIds?: string[] }>;
+}
+
+// ---------- Coexistence ----------
+
+/**
+ * Webhook fields a Coexistence number needs, on top of the usual `messages`.
+ * Pass to `setAppWebhookFields` — without these the app receives nothing about
+ * what the business types on their phone.
+ */
+export const COEXISTENCE_WEBHOOK_FIELDS = [
+  'messages',
+  'history',
+  'smb_app_state_sync',
+  'smb_message_echoes',
+] as const;
+
+/**
+ * A message the business sent from the WhatsApp Business *app* on their phone,
+ * echoed to the webhook so server-side code can see it.
+ *
+ * These are outbound — the business is the sender, `contact` is the customer
+ * who received it. Treating an echo as an inbound customer message makes a bot
+ * reply to its own operator, which is why they arrive through their own
+ * parser rather than `handleWebhook`.
+ */
+export interface WhatsAppMessageEcho {
+  /** Platform message id (`wamid...`). */
+  externalId: string;
+  /** The customer on the other side of the conversation. */
+  contact: import('@msgly/core').ContactRef;
+  account: import('@msgly/core').AccountRef;
+  content: MessageContent;
+  timestamp: string;
+  raw: unknown;
+}
+
+/** One conversation's worth of back-filled history. */
+export interface WhatsAppHistoryThread {
+  /** The customer's phone number — the thread key. */
+  contactId: string;
+  messages: Array<{
+    externalId: string;
+    /** Who sent it: `business` when the echo came from this number. */
+    direction: 'inbound' | 'outbound';
+    content: MessageContent;
+    timestamp: string;
+    /** Delivery state at the time of export, when WhatsApp reports one. */
+    status?: string;
+    raw: unknown;
+  }>;
+}
+
+/**
+ * A chunk of back-filled history. Meta delivers up to ~180 days across several
+ * webhooks, so `progress` and `chunkOrder` say where in the export you are —
+ * history is not complete until `progress` reaches 100.
+ */
+export interface WhatsAppHistoryChunk {
+  /** Meta's phase label for this stage of the export. */
+  phase?: string;
+  /** Monotonic index of this chunk within the export. */
+  chunkOrder?: number;
+  /** Percentage of the export delivered so far, 0-100. */
+  progress?: number;
+  threads: WhatsAppHistoryThread[];
+}
+
+/** A contact from the business's own phone address book. */
+export interface WhatsAppSyncedContact {
+  phoneNumber: string;
+  fullName?: string;
+  firstName?: string;
+  /** What happened to the contact, e.g. "add" / "remove". */
+  action?: string;
+  timestamp?: string;
+}
+
+/** Whether a number is running Coexistence. */
+export interface WhatsAppCoexistenceStatus {
+  /** True when the number is also live in the WhatsApp Business app. */
+  isOnBusinessApp: boolean;
+  /** Meta's own label, e.g. "CLOUD_API" | "BUSINESS_APP" | "NOT_APPLICABLE". */
+  platformType?: string;
 }
 
 // ---------- Adapter interface ----------
@@ -296,11 +389,67 @@ export interface WhatsAppAdapter extends Adapter {
   ): Promise<void>;
 
   /**
+   * React to a message with an emoji, or pass an empty string to remove a
+   * reaction this business previously sent.
+   *
+   * @param externalMessageId  The `externalId` of the message being reacted to.
+   */
+  sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
+
+  /**
    * Mark an inbound message as read (shows the sender's double-tick as blue).
    * This is a separate operation from the typing indicator — you can call it
    * independently to acknowledge receipt without showing a typing bubble.
    */
   markAsRead(externalMessageId: string): Promise<void>;
+
+  // ---- Coexistence ----
+
+  /**
+   * Parse an `smb_message_echoes` webhook — messages the business typed on
+   * their phone. Returns `[]` for any other payload, so it is safe to call on
+   * every request alongside `handleWebhook`.
+   */
+  parseMessageEchoes(rawBody: unknown): WhatsAppMessageEcho[];
+
+  /**
+   * Parse a `history` webhook — back-filled conversations delivered in chunks
+   * over the minutes after onboarding. Returns `[]` for any other payload.
+   *
+   * Check `progress` on each chunk: the back-fill is only complete at 100.
+   */
+  parseHistory(rawBody: unknown): WhatsAppHistoryChunk[];
+
+  /**
+   * Parse an `smb_app_state_sync` webhook — the business's phone contacts.
+   * Returns `[]` for any other payload.
+   */
+  parseContactSync(rawBody: unknown): WhatsAppSyncedContact[];
+
+  /**
+   * Ask WhatsApp to push the business's contacts and/or chat history to the
+   * webhook. Results arrive asynchronously as `smb_app_state_sync` and
+   * `history` events — this call only requests them.
+   *
+   * Meta allows this **once per onboarding**, and the whole sync must finish
+   * within 24 hours of onboarding or the customer has to onboard again.
+   */
+  requestSmbAppData(options?: {
+    /** Request the phone address book. Default true. */
+    contacts?: boolean;
+    /** Request past conversations. Default true. */
+    history?: boolean;
+  }): Promise<void>;
+
+  /**
+   * Check whether this number is running Coexistence, via the phone number's
+   * `is_on_biz_app` and `platform_type` fields.
+   */
+  getCoexistenceStatus(phoneNumberId?: string): Promise<WhatsAppCoexistenceStatus>;
 
   // ---- Token introspection ----
 
@@ -338,10 +487,10 @@ const GRAPH_API = 'https://graph.facebook.com';
 const CAPABILITIES: AdapterCapabilities = {
   text: true,
   media: { image: true, video: true, audio: true, file: true },
-  interactive: { buttons: true, quickReplies: true },
+  interactive: { buttons: true, quickReplies: true, lists: true, ctaUrl: true },
   templates: true,
   reactions: true,
-  typing: false,
+  typing: true,
 };
 
 /**
@@ -389,6 +538,15 @@ function constantTimeEqualHex(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/**
+ * WhatsApp reports the business number as a display string ("+1 555-0100") in
+ * history metadata but as bare digits on a message, so they only compare after
+ * stripping everything that is not a digit.
+ */
+function normaliseNumber(n: string): string {
+  return n.replace(/\D/g, '');
 }
 
 function mapStatus(status: string): DeliveryStatus | null {
@@ -473,6 +631,54 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
         },
       };
     }
+
+    case 'list':
+      return {
+        type: 'interactive',
+        interactive: {
+          type: 'list',
+          ...(content.header
+            ? { header: { type: 'text', text: content.header } }
+            : {}),
+          body: { text: content.text },
+          ...(content.footer ? { footer: { text: content.footer } } : {}),
+          action: {
+            // WhatsApp caps the button label at 20 chars and allows at most
+            // 10 rows in total across all sections.
+            button: content.buttonLabel.slice(0, 20),
+            sections: content.sections.map((sec) => ({
+              ...(sec.title ? { title: sec.title.slice(0, 24) } : {}),
+              rows: sec.rows.map((r) => ({
+                id: r.id,
+                title: r.title.slice(0, 24),
+                ...(r.description
+                  ? { description: r.description.slice(0, 72) }
+                  : {}),
+              })),
+            })),
+          },
+        },
+      };
+
+    case 'cta_url':
+      return {
+        type: 'interactive',
+        interactive: {
+          type: 'cta_url',
+          ...(content.header
+            ? { header: { type: 'text', text: content.header } }
+            : {}),
+          body: { text: content.text },
+          ...(content.footer ? { footer: { text: content.footer } } : {}),
+          action: {
+            name: 'cta_url',
+            parameters: {
+              display_text: content.buttonLabel.slice(0, 20),
+              url: content.url,
+            },
+          },
+        },
+      };
 
     case 'template': {
       // `components` wins over `variables` when both are present (pass-through for
@@ -644,7 +850,7 @@ function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
  */
 export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
   const apiBase = (): string => config.apiBase ?? GRAPH_API;
-  const apiVersion = (): string => config.apiVersion ?? 'v20.0';
+  const apiVersion = (): string => config.apiVersion ?? 'v23.0';
   const sendUrl = (): string =>
     `${apiBase()}/${apiVersion()}/${config.phoneNumberId}/messages`;
   const mediaUrl = (): string =>
@@ -659,6 +865,7 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
       to: message.contact.channelUserId,
+      ...(message.replyTo ? { context: { message_id: message.replyTo } } : {}),
       ...toWhatsAppMessage(message.content),
     };
 
@@ -702,6 +909,12 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
       for (const change of entry.changes ?? []) {
         const value = change.value;
         if (!value) continue;
+        // Coexistence adds `history` and `smb_message_echoes`, which also carry
+        // messages — but they are back-fill and the business's own outgoing
+        // mail, not new customer input. Feeding either to a bot would make it
+        // answer its own operator, so only the `messages` field is inbound.
+        // (`field` is absent on some older fixtures; treat that as `messages`.)
+        if (change.field && change.field !== 'messages') continue;
         if (value.statuses && value.statuses.length > 0) continue;
 
         for (const m of value.messages ?? []) {
@@ -1341,6 +1554,31 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     }
   }
 
+  async function sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const res = await fetch(sendUrl(), {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: contact.channelUserId,
+        type: 'reaction',
+        // An empty emoji removes a reaction the business previously sent.
+        reaction: { message_id: externalMessageId, emoji },
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        `[msgly/whatsapp] sendReaction failed: ${JSON.stringify(data['error'] ?? data)}`,
+      );
+    }
+  }
+
   async function unsubscribeFromWebhook(): Promise<void> {
     const wabaId = requireWabaId();
     const res = await graphFetch(`/${wabaId}/subscribed_apps`, { method: 'DELETE' });
@@ -1369,6 +1607,143 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
         `[msgly/whatsapp] setAppWebhookFields failed: ${JSON.stringify(data['error'] ?? data)}`,
       );
     }
+  }
+
+  // ---------- Coexistence ----------
+
+  /** Walk `entry[].changes[]`, yielding the `value` of changes matching `field`. */
+  function changeValues(rawBody: unknown, field: string): Record<string, unknown>[] {
+    const body = rawBody as WhatsAppWebhookBody | undefined;
+    const out: Record<string, unknown>[] = [];
+    for (const entry of body?.entry ?? []) {
+      for (const change of entry.changes ?? []) {
+        if (change.field !== field) continue;
+        if (change.value) out.push(change.value as unknown as Record<string, unknown>);
+      }
+    }
+    return out;
+  }
+
+  function parseMessageEchoes(rawBody: unknown): WhatsAppMessageEcho[] {
+    const out: WhatsAppMessageEcho[] = [];
+
+    for (const value of changeValues(rawBody, 'smb_message_echoes')) {
+      const metadata = value['metadata'] as { phone_number_id?: string } | undefined;
+      const channelAccountId = metadata?.phone_number_id ?? config.phoneNumberId;
+      const echoes = (value['message_echoes'] as WhatsAppInboundMessage[] | undefined) ?? [];
+
+      for (const m of echoes) {
+        const content = parseContent(m);
+        if (!content) continue;
+        out.push({
+          externalId: m.id,
+          // `to` is the customer: on an echo the business is the sender, so the
+          // conversation partner is the recipient, not `from`.
+          contact: { channel: 'whatsapp', channelUserId: m.to ?? m.from },
+          account: { channel: 'whatsapp', channelAccountId },
+          content,
+          timestamp: new Date(Number(m.timestamp) * 1000).toISOString(),
+          raw: m,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  function parseHistory(rawBody: unknown): WhatsAppHistoryChunk[] {
+    const out: WhatsAppHistoryChunk[] = [];
+
+    for (const value of changeValues(rawBody, 'history')) {
+      const metadata = value['metadata'] as { display_phone_number?: string } | undefined;
+      const businessNumber = metadata?.display_phone_number;
+
+      for (const chunk of (value['history'] as WhatsAppHistoryPayload[] | undefined) ?? []) {
+        const meta = chunk.metadata;
+        const threads: WhatsAppHistoryThread[] = [];
+
+        for (const thread of chunk.threads ?? []) {
+          const messages: WhatsAppHistoryThread['messages'] = [];
+
+          for (const m of thread.messages ?? []) {
+            const content = parseContent(m);
+            if (!content) continue;
+            messages.push({
+              externalId: m.id,
+              // History carries both sides. The business's own number as
+              // sender means the business wrote it.
+              direction:
+                businessNumber && m.from && normaliseNumber(m.from) === normaliseNumber(businessNumber)
+                  ? 'outbound'
+                  : 'inbound',
+              content,
+              timestamp: new Date(Number(m.timestamp) * 1000).toISOString(),
+              ...(m.history_context?.status ? { status: m.history_context.status } : {}),
+              raw: m,
+            });
+          }
+
+          threads.push({ contactId: thread.id, messages });
+        }
+
+        out.push({
+          ...(meta?.phase ? { phase: meta.phase } : {}),
+          ...(meta?.chunk_order !== undefined ? { chunkOrder: Number(meta.chunk_order) } : {}),
+          ...(meta?.progress !== undefined ? { progress: Number(meta.progress) } : {}),
+          threads,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  function parseContactSync(rawBody: unknown): WhatsAppSyncedContact[] {
+    const out: WhatsAppSyncedContact[] = [];
+
+    for (const value of changeValues(rawBody, 'smb_app_state_sync')) {
+      for (const entry of (value['state_sync'] as WhatsAppStateSyncEntry[] | undefined) ?? []) {
+        // `state_sync` is typed for future kinds; only contacts exist today.
+        if (entry.type !== 'contact' || !entry.contact) continue;
+        out.push({
+          phoneNumber: entry.contact.phone_number,
+          ...(entry.contact.full_name ? { fullName: entry.contact.full_name } : {}),
+          ...(entry.contact.first_name ? { firstName: entry.contact.first_name } : {}),
+          ...(entry.action ? { action: entry.action } : {}),
+          ...(entry.metadata?.timestamp
+            ? { timestamp: new Date(Number(entry.metadata.timestamp) * 1000).toISOString() }
+            : {}),
+        });
+      }
+    }
+
+    return out;
+  }
+
+  async function requestSmbAppData(options?: {
+    contacts?: boolean;
+    history?: boolean;
+  }): Promise<void> {
+    const body: Record<string, unknown> = { messaging_product: 'whatsapp' };
+    if (options?.contacts !== false) body['sync_type'] = 'smb_app_state_sync';
+    if (options?.history !== false) body['history_sync'] = true;
+
+    const res = await graphFetch(`/${config.phoneNumberId}/smb_app_data`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    await assertOk(res, 'requestSmbAppData');
+  }
+
+  async function getCoexistenceStatus(
+    phoneNumberId = config.phoneNumberId,
+  ): Promise<WhatsAppCoexistenceStatus> {
+    const res = await graphFetch(`/${phoneNumberId}?fields=is_on_biz_app,platform_type`);
+    const data = await assertOk(res, 'getCoexistenceStatus');
+    return {
+      isOnBusinessApp: Boolean(data['is_on_biz_app']),
+      platformType: data['platform_type'] as string | undefined,
+    };
   }
 
   // ---------- Token introspection ----------
@@ -1436,6 +1811,9 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
   return {
     channel: 'whatsapp',
     capabilities: CAPABILITIES,
+    // Meta fixes dual-platform numbers at 20 mps regardless of tier, so the
+    // hub must pace to that rather than the API-only default.
+    ...(config.coexistence ? { rateLimit: { perSecond: 20 } } : {}),
     send,
     handleWebhook,
     verifySignature,
@@ -1469,6 +1847,12 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     sendTyping,
     sendTypingIndicator,
     markAsRead,
+    sendReaction,
+    parseMessageEchoes,
+    parseHistory,
+    parseContactSync,
+    requestSmbAppData,
+    getCoexistenceStatus,
     debugToken,
     exchangeCodeForToken,
     verifySignatureVerbose,
@@ -1485,6 +1869,10 @@ interface WhatsAppWebhookBody {
       field: string;
       value?: {
         messaging_product?: string;
+        /** Coexistence payloads; see parseHistory / parseContactSync / parseMessageEchoes. */
+        history?: WhatsAppHistoryPayload[];
+        state_sync?: WhatsAppStateSyncEntry[];
+        message_echoes?: WhatsAppInboundMessage[];
         metadata?: { phone_number_id?: string; display_phone_number?: string };
         contacts?: Array<{ profile?: { name?: string }; wa_id?: string }>;
         messages?: WhatsAppInboundMessage[];
@@ -1500,9 +1888,25 @@ interface WhatsAppWebhookBody {
   }>;
 }
 
+interface WhatsAppHistoryPayload {
+  metadata?: { phase?: string; chunk_order?: number | string; progress?: number | string };
+  threads?: Array<{ id: string; messages?: WhatsAppInboundMessage[] }>;
+}
+
+interface WhatsAppStateSyncEntry {
+  type: string;
+  contact?: { full_name?: string; first_name?: string; phone_number: string };
+  action?: string;
+  metadata?: { timestamp?: string };
+}
+
 interface WhatsAppInboundMessage {
   id: string;
   from: string;
+  /** Present on echoes and history entries — absent on ordinary inbound. */
+  to?: string;
+  /** History only: the message's delivery state at export time. */
+  history_context?: { status?: string };
   timestamp: string;
   type: string;
   text?: { body: string };

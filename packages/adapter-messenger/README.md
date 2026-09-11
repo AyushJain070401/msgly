@@ -66,7 +66,7 @@ interface MessengerConfig {
   /** Override for tests. Defaults to https://graph.facebook.com. */
   apiBase?: string;
 
-  /** Graph API version. Defaults to v20.0. */
+  /** Graph API version. Defaults to v23.0. */
   apiVersion?: string;
 }
 ```

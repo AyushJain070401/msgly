@@ -233,6 +233,11 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
         throw new Error('Unsupported content type for Telegram');
     }
 
+    // Bot API 7.0+ supersedes reply_to_message_id with reply_parameters.
+    if (message.replyTo) {
+      payload['reply_parameters'] = { message_id: Number(message.replyTo) };
+    }
+
     const res = await fetch(apiUrl(method), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -510,6 +515,32 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     });
   }
 
+  async function sendReaction(
+    contact: ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const res = await fetch(apiUrl('setMessageReaction'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: contact.channelUserId,
+        message_id: Number(externalMessageId),
+        // An empty reaction list clears the bot's reaction on the message.
+        reaction: emoji ? [{ type: 'emoji', emoji }] : [],
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      description?: string;
+    };
+    if (!data.ok) {
+      throw new Error(
+        `[msgly/telegram] sendReaction failed: ${data.description ?? res.status}`,
+      );
+    }
+  }
+
   async function sendTyping(contact: ContactRef): Promise<void> {
     await sendChatAction(contact.channelUserId, 'typing');
   }
@@ -578,6 +609,7 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     answerCallbackQuery,
     sendChatAction,
     sendTyping,
+    sendReaction,
     getWebhookInfo,
     getBotInfo,
   };

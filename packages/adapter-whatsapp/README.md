@@ -63,10 +63,18 @@ interface WhatsAppConfig {
   wabaId?: string;
   /** App ID — required for profile picture upload and token introspection. */
   appId?: string;
+  /** Number also runs the WhatsApp Business app — caps throughput at 20 mps. */
+  coexistence?: boolean;
   apiBase?: string;       // defaults to https://graph.facebook.com
-  apiVersion?: string;    // defaults to v20.0
+  apiVersion?: string;    // defaults to v23.0
 }
 ```
+
+> **Upgrading from 1.5.0 or earlier?** The default Graph version moved from
+> `v20.0` to `v23.0`, because **Meta retires v20.0 on 24 September 2026**.
+> Upgrading the package is the whole fix — unless you set `apiVersion: 'v20.0'`
+> yourself, in which case an explicit value still wins and you must raise it.
+> See the [migration guide](../../README.md#upgrading-to-160).
 
 ## Setup (20 minutes)
 
@@ -99,9 +107,13 @@ interface WhatsAppConfig {
 | location      | ✓         |
 | buttons       | ✓ (max 3, 20-char labels) |
 | quick replies | ✓         |
+| list picker   | ✓ (`type: 'list'`, max 10 rows) |
+| CTA URL button| ✓ (`type: 'cta_url'`) |
 | templates     | ✓         |
-| reactions     | ✓         |
+| reactions     | ✓ (`sendReaction`) |
 | typing        | ✓ (`sendTypingIndicator`) |
+| threaded reply| ✓ (`replyTo`) |
+| coexistence   | ✓ (Business app + Cloud API on one number) |
 
 The adapter silently truncates button counts and label lengths to fit Meta's limits.
 
@@ -210,6 +222,72 @@ await hub.send({
 ```
 
 User taps a button → you receive an inbound message where `content.text` is the button's visible label and `interaction.data` is the button's stable `id` — use `interaction.data` for CSAT / postback matching since labels can be localised.
+
+### List picker
+
+When there are more choices than three buttons can hold. Up to 10 rows total
+across all sections; over-long labels are truncated to Meta's limits rather than
+rejected by the API.
+
+```typescript
+await hub.send({
+  channel: 'whatsapp',
+  account, contact,
+  content: {
+    type: 'list',
+    text: 'Which slot suits you?',
+    buttonLabel: 'View times',      // max 20 chars
+    header: 'Booking',              // optional
+    footer: 'Tap to choose',        // optional
+    sections: [
+      {
+        title: 'Morning',
+        rows: [
+          { id: '0900', title: '09:00', description: 'with Dr. Rao' },
+          { id: '1030', title: '10:30' },
+        ],
+      },
+    ],
+  },
+});
+```
+
+The reply arrives as an inbound message whose `interaction.data` is the row `id`.
+
+### CTA URL button
+
+A tappable button that opens a link, so the raw URL never appears in the body.
+
+```typescript
+content: {
+  type: 'cta_url',
+  text: 'Your receipt is ready.',
+  buttonLabel: 'View receipt',
+  url: 'https://example.com/r/1',
+}
+```
+
+### Replying in-thread
+
+Quote the message you are answering by passing its **platform** id:
+
+```typescript
+await hub.send({
+  channel: 'whatsapp',
+  account,
+  contact,
+  content: { type: 'text', text: 'Yes — shipping Tuesday.' },
+  replyTo: inbound.externalId,   // NOT inbound.id
+});
+```
+
+### Reacting to a message
+
+```typescript
+await adapter.sendReaction(contact, inbound.externalId, '👍');
+await adapter.sendReaction(contact, inbound.externalId, '');  // remove
+```
+
 
 ## Business profile
 
@@ -390,6 +468,128 @@ const tokenInfo = await adapter.debugToken(accessToken);
 const wabaId = tokenInfo.granularScopes
   ?.find(s => s.scope === 'whatsapp_business_management')
   ?.targetIds?.[0];
+```
+
+## Coexistence (Business app + Cloud API on one number)
+
+Coexistence lets a business keep using the **WhatsApp Business app** on their
+phone while the same number is also connected to the Cloud API. Staff answer
+from the handset, your server automates the rest, and neither side loses the
+chat history.
+
+### Eligibility — read before you build
+
+Coexistence is gated on both sides, and "the customer has a WhatsApp Business
+account" is **not** sufficient:
+
+| Requirement | Applies to |
+| --- | --- |
+| Meta **Solution Partner** or **Tech Provider** status | you |
+| **Embedded Signup v4**, with session logging enabled | you |
+| The **WhatsApp Business app** (not just a WABA), **v2.24.17+** | the customer |
+| Account tenure and messaging-quality checks | the customer |
+| Region availability | the customer |
+
+Note the terminology trap: a *WhatsApp Business Account* (WABA) is the API-side
+container and every Cloud API user has one. Coexistence specifically requires
+the *WhatsApp Business app* — the SMB phone app — to already be running that
+number.
+
+Coexistence numbers also **cannot** get a blue-badge Official Business Account,
+and Standard Business Verification is unavailable (Partner-Led Business
+Verification or Meta Verified are the alternatives). Group chats, disappearing
+and view-once messages, live location and broadcast lists are disabled on the
+handset once onboarded, and throughput is fixed at **20 messages/second**.
+
+### Subscribe to the extra webhooks
+
+Coexistence adds three webhook fields. Without them you get no visibility into
+what staff type on the phone:
+
+```ts
+import { COEXISTENCE_WEBHOOK_FIELDS } from '@msgly/whatsapp';
+
+await wa.setAppWebhookFields([...COEXISTENCE_WEBHOOK_FIELDS]);
+// ['messages', 'history', 'smb_app_state_sync', 'smb_message_echoes']
+```
+
+### Route each payload to the right parser
+
+`handleWebhook` returns **only** genuine inbound customer messages. History and
+echoes are deliberately excluded: replaying a back-fill would flood your bot
+with months of old traffic, and treating an echo as inbound would make the bot
+reply to its own operator. Each has its own parser, and every parser returns
+`[]` for payloads that are not its own, so calling all four is safe:
+
+```ts
+app.post('/webhook', async (req, res) => {
+  if (!(await wa.verifySignature(toWebhookRequest(req)))) return res.sendStatus(403);
+  res.sendStatus(200); // ack fast, then process
+
+  const body = req.body;
+
+  // Real customers writing in — the only thing a bot should answer.
+  for (const msg of await wa.handleWebhook(toWebhookRequest(req))) {
+    await bot.handle(msg);
+  }
+
+  // Staff replying from the handset. Log it, stop any pending auto-reply,
+  // but never treat it as customer input.
+  for (const echo of wa.parseMessageEchoes(body)) {
+    await store.recordOutbound(echo.contact.channelUserId, echo.content);
+    await bot.cancelPendingReply(echo.contact.channelUserId);
+  }
+
+  // Back-fill, delivered in chunks over the minutes after onboarding.
+  for (const chunk of wa.parseHistory(body)) {
+    for (const thread of chunk.threads) {
+      await store.importThread(thread.contactId, thread.messages);
+    }
+    if (chunk.progress === 100) await store.markBackfillComplete();
+  }
+
+  // The business's own phone address book.
+  for (const contact of wa.parseContactSync(body)) {
+    await store.upsertContact(contact.phoneNumber, contact.fullName);
+  }
+});
+```
+
+`parseHistory` marks each message `inbound` or `outbound` by comparing the
+sender against the business number, comparing digits only — WhatsApp writes the
+business number as `+1 555-0100` in history metadata but `15550100` on the
+message itself.
+
+### Trigger the one-time sync
+
+After onboarding succeeds, ask WhatsApp to push contacts and history. Results
+arrive asynchronously on the webhooks above; this call only requests them.
+
+```ts
+await wa.requestSmbAppData();                    // both
+await wa.requestSmbAppData({ history: false });  // contacts only
+```
+
+**This runs once per onboarding**, and the whole sync must complete within
+**24 hours** of onboarding or the customer has to start over. History covers
+roughly 180 days, excludes group conversations, and media is generally only
+retrievable for the last ~14 days.
+
+### Check whether a number is coexisting
+
+```ts
+const status = await wa.getCoexistenceStatus();
+// { isOnBusinessApp: true, platformType: 'CLOUD_API' }
+```
+
+### Pace to the real throughput
+
+Set `coexistence: true` in config so `sendBulk` paces to the 20 mps ceiling
+Meta applies to dual-platform numbers rather than the higher API-only default:
+
+```ts
+const wa = createWhatsAppAdapter({ ...credentials, coexistence: true });
+wa.rateLimit; // { perSecond: 20 }
 ```
 
 ## Token introspection

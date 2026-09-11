@@ -266,3 +266,80 @@ describe('fmt', () => {
     expect(fmt.italic('hi')).toBe('_hi_');
   });
 });
+
+describe('replyTo and reactions', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function mockCall(payload: unknown = { ok: true, result: { message_id: 55 } }) {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => payload } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  const bodyOf = (calls: Array<{ init?: RequestInit }>) =>
+    JSON.parse(calls[0]!.init!.body as string);
+
+  const contact = { channel: 'telegram' as const, channelUserId: '4242' };
+  const base = {
+    id: 'm-1',
+    direction: 'outbound' as const,
+    channel: 'telegram' as const,
+    account: { channel: 'telegram' as const, channelAccountId: 'bot' },
+    contact,
+    timestamp: new Date().toISOString(),
+  };
+
+  it('maps replyTo to reply_parameters, not the deprecated field', async () => {
+    const calls = mockCall();
+    await createTelegramAdapter(config).send({
+      ...base,
+      content: { type: 'text', text: 'hi' },
+      replyTo: '99',
+    });
+    const body = bodyOf(calls);
+    expect(body.reply_parameters).toEqual({ message_id: 99 });
+    expect(body).not.toHaveProperty('reply_to_message_id');
+  });
+
+  it('applies replyTo to media sends too, not just text', async () => {
+    const calls = mockCall();
+    await createTelegramAdapter(config).send({
+      ...base,
+      content: { type: 'image', mediaRef: { kind: 'url', value: 'https://cdn/x' } },
+      replyTo: '7',
+    });
+    expect(calls[0]!.url).toContain('sendPhoto');
+    expect(bodyOf(calls).reply_parameters).toEqual({ message_id: 7 });
+  });
+
+  it('sends a reaction via setMessageReaction', async () => {
+    const calls = mockCall({ ok: true, result: true });
+    await createTelegramAdapter(config).sendReaction!(contact, '99', '👍');
+    expect(calls[0]!.url).toContain('setMessageReaction');
+    expect(bodyOf(calls)).toEqual({
+      chat_id: '4242',
+      message_id: 99,
+      reaction: [{ type: 'emoji', emoji: '👍' }],
+    });
+  });
+
+  it('clears the reaction with an empty emoji', async () => {
+    const calls = mockCall({ ok: true, result: true });
+    await createTelegramAdapter(config).sendReaction!(contact, '99', '');
+    expect(bodyOf(calls).reaction).toEqual([]);
+  });
+
+  it('throws when Telegram rejects the reaction', async () => {
+    mockCall({ ok: false, description: 'REACTION_INVALID' });
+    await expect(
+      createTelegramAdapter(config).sendReaction!(contact, '99', '🦄'),
+    ).rejects.toThrow('REACTION_INVALID');
+  });
+});

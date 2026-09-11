@@ -40,6 +40,21 @@ export interface RocketChatConfig {
 
 export interface RocketChatAdapter extends Adapter {
   readonly channel: 'rocketchat';
+  /**
+   * React to a message. `emoji` is a Rocket.Chat emoji *name* (`thumbsup` or
+   * `:thumbsup:`), not a unicode glyph.
+   */
+  sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
+  /** Remove one named reaction this user previously added to a message. */
+  removeReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
   /** Resolve a room id from a channel name (without the leading `#`). */
   getRoomId(channelName: string): Promise<string | null>;
 }
@@ -324,6 +339,53 @@ export function createRocketChatAdapter(
     };
   }
 
+  async function react(
+    externalMessageId: string,
+    emoji: string,
+    shouldReact: boolean,
+  ): Promise<void> {
+    const emojiName = emoji.replace(/^:|:$/g, '');
+    if (!emojiName) {
+      throw new Error(
+        '[msgly/rocketchat] reaction requires an emoji name, e.g. "thumbsup" or ":thumbsup:".',
+      );
+    }
+    const res = await fetch(`${apiBase}/chat.react`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        messageId: externalMessageId,
+        emoji: `:${emojiName}:`,
+        shouldReact,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      throw new Error(
+        `[msgly/rocketchat] chat.react failed: ${data.error ?? `HTTP ${res.status}`}`,
+      );
+    }
+  }
+
+  async function sendReaction(
+    _contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    await react(externalMessageId, emoji, true);
+  }
+
+  async function removeReaction(
+    _contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    await react(externalMessageId, emoji, false);
+  }
+
   async function getRoomId(channelName: string): Promise<string | null> {
     const res = await fetch(
       `${apiBase}/channels.info?roomName=${encodeURIComponent(channelName)}`,
@@ -483,6 +545,8 @@ export function createRocketChatAdapter(
     verifyCredentials,
     uploadMedia,
     downloadMedia,
+    sendReaction,
+    removeReaction,
     getRoomId,
   };
 }

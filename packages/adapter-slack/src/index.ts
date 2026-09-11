@@ -280,7 +280,10 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
 
     // Reply in-thread: pass the parent message's ts via metadata.threadTs
     // (e.g. forward it from an inbound message's own metadata.threadTs).
-    const threadTs = message.metadata?.['threadTs'] as string | undefined;
+    // `metadata.threadTs` predates the cross-channel `replyTo` field, so it
+    // still wins when both are set.
+    const threadTs =
+      (message.metadata?.['threadTs'] as string | undefined) ?? message.replyTo;
     if (threadTs) payload['thread_ts'] = threadTs;
 
     try {

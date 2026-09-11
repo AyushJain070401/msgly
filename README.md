@@ -8,6 +8,119 @@
 
 **🌐 Website: [ayushjain070401.github.io/msgly](https://ayushjain070401.github.io/msgly/)** — browse every channel, the quickstart and the API in one place. Source lives in [`site/`](site/).
 
+## Upgrading to 1.6.0
+
+**Nothing was removed and nothing changed shape.** Every 1.5.0 call site compiles
+and behaves the same on 1.6.0. One line is worth acting on today, the rest is new
+surface you can adopt when you want.
+
+### 🔴 Act now — Meta Graph API v20.0 retires 2026-09-24
+
+`@msgly/whatsapp`, `@msgly/instagram` and `@msgly/messenger` defaulted to Graph
+`v20.0`, which Meta **turns off on 24 September 2026**. After that date every
+send on the old default fails. 1.6.0 moves the default to `v23.0`, supported
+until 2027-10-08.
+
+```bash
+npm i @msgly/whatsapp@^1.6.0 @msgly/instagram@^1.6.0 @msgly/messenger@^1.6.0
+```
+
+Upgrading is the whole fix — no code change. **Unless you pinned the version
+yourself:**
+
+```ts
+// If you have this, the upgrade does NOT help you. Bump it or delete it.
+createWhatsAppAdapter({ ...creds, apiVersion: 'v20.0' });
+```
+
+An explicit `apiVersion` still wins over the default, so a hard-coded `v20.0`
+keeps failing after the retirement date. Search your codebase for `apiVersion`
+and either raise it to `v23.0` or drop the line and inherit the default.
+
+### Reactions now actually send
+
+`capabilities.reactions: true` was advertised by five adapters while the library
+had no way to send one. There is now a real method:
+
+```ts
+await adapter.sendReaction?.(contact, inbound.externalId, '👍');
+```
+
+It is optional on the `Adapter` interface, so call it with `?.`. Implemented for
+WhatsApp, Telegram, Instagram, Mattermost and Rocket.Chat.
+
+Platforms disagree on what an emoji is, and the adapters surface that rather
+than hiding it:
+
+| Channel | `emoji` argument | Removing |
+| --- | --- | --- |
+| WhatsApp, Telegram | unicode glyph — `'👍'` | pass `''` |
+| Mattermost, Rocket.Chat | emoji **name** — `'thumbsup'` | `removeReaction(...)` |
+| Instagram | one of `love`, `like`, `care`, `haha`, `wow`, `sad`, `angry` | pass `''` |
+
+### Threaded replies via `replyTo`
+
+`OutboundMessage` gained an optional `replyTo` holding the **platform's** message
+id (`InboundMessage.externalId`), not msgly's internal `id`:
+
+```ts
+await hub.send({ ...envelope, content, replyTo: inbound.externalId });
+```
+
+Mapped to WhatsApp `context.message_id`, Telegram `reply_parameters`, Discord
+`message_reference`, Slack `thread_ts`. Channels without threading ignore it
+rather than failing, so setting it is always safe.
+
+**Slack users:** your existing `metadata.threadTs` keeps working and still takes
+precedence when both are set. No change needed.
+
+### Typing flags corrected
+
+Two capability flags were lying. If you branch on them, re-check those branches:
+
+- **WhatsApp** reported `typing: false` while shipping a working
+  `sendTypingIndicator()` — now `true`.
+- **Microsoft Teams** reported `typing: true` with no implementation — it now
+  has one. It needs the conversation's `serviceUrl`, like `send` does:
+  `await teams.sendTyping?.(contact, serviceUrl)`. Called without it, it no-ops
+  instead of throwing.
+
+### New WhatsApp message types
+
+Two of WhatsApp's interactive sub-types are now first-class content:
+
+```ts
+// A sectioned picker, for choice sets too large for three buttons
+content: {
+  type: 'list',
+  text: 'Pick a slot',
+  buttonLabel: 'View times',
+  sections: [{ title: 'Morning', rows: [{ id: '9am', title: '09:00' }] }],
+}
+
+// A URL button, without the raw link in the body
+content: { type: 'cta_url', text: 'Receipt ready', buttonLabel: 'View', url: '...' }
+```
+
+These are gated behind new **optional** capability flags
+(`capabilities.interactive.lists` / `.ctaUrl`), so every existing adapter —
+including any third-party one you maintain — keeps compiling untouched. The hub
+rejects the new types with `UnsupportedFeature` on channels that have not opted
+in, exactly as it already does for media.
+
+> **Writing your own adapter?** `MessageContent` gained two union members. If your
+> `switch` has a `default` branch you are fine. If it is exhaustive without one,
+> TypeScript will now ask you to handle `'list'` and `'cta_url'` — throwing an
+> "unsupported" error is the correct answer unless you implement them.
+
+### WhatsApp Coexistence (new, opt-in)
+
+Run the WhatsApp Business **app** and the Cloud API on the same number. Entirely
+additive: if you do not use it, nothing about your integration changes. See the
+[adapter README](packages/adapter-whatsapp/README.md#coexistence-business-app--cloud-api-on-one-number)
+for eligibility — it needs Tech Provider status and is **not** available just
+because a customer has a WhatsApp Business Account.
+
 ## Why
 
 Building a chatbot or notification system that works across multiple channels means learning many different APIs, webhook formats, and media-handling rules. Msgly collapses that into one TypeScript-native interface: register the adapters you need, send and receive in a single unified format.

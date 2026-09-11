@@ -693,6 +693,36 @@ export function createMsTeamsAdapter(config: MsTeamsConfig): MsTeamsAdapter {
     };
   }
 
+  /**
+   * Show the typing indicator in a Teams conversation.
+   *
+   * Like `send`, this needs the conversation's `serviceUrl` — Teams has no
+   * single global endpoint. Pass the `serviceUrl` from the inbound activity's
+   * metadata; without it the call is a no-op rather than an error, so generic
+   * hub code (`await adapter.sendTyping?.(contact)`) stays safe.
+   */
+  async function sendTyping(
+    contact: import('@msgly/core').ContactRef,
+    serviceUrl?: string,
+  ): Promise<void> {
+    if (!serviceUrl) return;
+    const base = serviceUrl.endsWith('/') ? serviceUrl.slice(0, -1) : serviceUrl;
+    const url = `${base}/v3/conversations/${encodeURIComponent(contact.channelUserId)}/activities`;
+
+    const accessToken = await tokens.get();
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ type: 'typing' }),
+    });
+    if (!res.ok) {
+      throw new Error(`[msgly/msteams] sendTyping failed: HTTP ${res.status}`);
+    }
+  }
+
   return {
     channel: 'msteams',
     capabilities: CAPABILITIES,
@@ -702,5 +732,6 @@ export function createMsTeamsAdapter(config: MsTeamsConfig): MsTeamsAdapter {
     uploadMedia,
     downloadMedia,
     verifyCredentials,
+    sendTyping,
   };
 }

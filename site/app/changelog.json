@@ -1,0 +1,283 @@
+[
+  {
+    "version": "1.6.0",
+    "date": null,
+    "packageCount": 30,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Bring the Meta adapters back into API support, and make reactions, typing and message threading real across every channel that has them.",
+        "body": "Bring the Meta adapters back into API support, and make `reactions`, `typing`\n  and message threading real across every channel that has them.\n\n  **Meta Graph API v20.0 → v23.0 (urgent).** `@msgly/whatsapp`, `@msgly/instagram`\n  and `@msgly/messenger` all defaulted to `v20.0`, which Meta retires on\n  **2026-09-24** — every send on the default config would have started failing on\n  that date. The default is now `v23.0` (supported until 2027-10-08). An explicit\n  `apiVersion` in config still wins, so anyone already pinning a version is\n  unaffected.\n\n  **`reactions` was a dead capability.** Five adapters advertised\n  `capabilities.reactions: true` while the library had no way to send one — no\n  content type, no method, nothing. `Adapter` now carries an optional\n  `sendReaction(contact, externalMessageId, emoji)`, implemented for WhatsApp\n  (native `reaction` message), Telegram (`setMessageReaction`), Instagram\n  (`sender_action: react`), Mattermost (`POST /reactions`) and Rocket.Chat\n  (`chat.react`).\n\n  The platforms disagree about what an emoji _is_, and the adapters surface that\n  rather than hiding it: WhatsApp and Telegram take a unicode glyph and clear the\n  reaction on an empty string; Mattermost and Rocket.Chat take an emoji _name_\n  and remove one named reaction at a time, so they expose `removeReaction` instead\n  of overloading the empty string; Instagram accepts only its seven fixed reaction\n  names and rejects anything else with the valid list in the error.\n\n  **`typing` flags now match reality.** WhatsApp advertised `typing: false` while\n  shipping a working `sendTypingIndicator`, so the flag was talking callers out of\n  a feature that existed. Microsoft Teams advertised `typing: true` with no\n  implementation at all; it now sends a real `typing` activity, taking the\n  conversation's `serviceUrl` as a second argument the way `send` already does,\n  and no-ops without one so generic `adapter.sendTyping?.(contact)` stays safe.\n\n  **Message threading (`replyTo`).** `BaseMessage` gains an optional `replyTo`\n  carrying the _platform's_ message id. Adapters map it to their native\n  equivalent: WhatsApp `context.message_id`, Telegram `reply_parameters` (the\n  Bot API 7.0+ replacement for the deprecated `reply_to_message_id`), Discord\n  `message_reference` with `fail_if_not_exists: false` so a deleted parent\n  degrades to a normal message, and Slack `thread_ts`. Slack's existing\n  `metadata.threadTs` still wins where both are set. Channels without threading\n  ignore the field rather than failing, so setting it is always safe.\n\n  **WhatsApp list and CTA-URL messages.** `send()` covered one of WhatsApp's seven\n  interactive sub-types. New `ListContent` (`type: 'list'`) sends a sectioned\n  picker for choice sets too large for three buttons, and `CtaUrlContent`\n  (`type: 'cta_url'`) sends a URL button without putting the raw link in the body.\n  Both truncate to WhatsApp's field limits rather than letting the API reject the\n  send.\n\n  These are gated behind new optional `capabilities.interactive.lists` and\n  `capabilities.interactive.ctaUrl` flags. Being optional, every existing adapter\n  and any third-party one keeps compiling untouched, and the hub rejects the new\n  types with `UnsupportedFeature` on channels that have not opted in — the same\n  contract media content already follows.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/discord",
+          "@msgly/instagram",
+          "@msgly/mattermost",
+          "@msgly/messenger",
+          "@msgly/msteams",
+          "@msgly/rocketchat",
+          "@msgly/slack",
+          "@msgly/telegram",
+          "@msgly/whatsapp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add WhatsApp Coexistence support — the WhatsApp Business app and the Cloud API live on the same number, with staff answering from the handset while the API automates alongside them.",
+        "body": "Add WhatsApp Coexistence support — the WhatsApp Business app and the Cloud API\n  live on the same number, with staff answering from the handset while the API\n  automates alongside them.\n\n  Coexistence adds three webhook fields, exported as `COEXISTENCE_WEBHOOK_FIELDS`\n  for `setAppWebhookFields`, and each gets its own parser:\n  `parseMessageEchoes` for messages staff send from the phone, `parseHistory` for\n  the back-fill Meta pushes after onboarding, and `parseContactSync` for the\n  business's phone address book. Every parser returns `[]` for a payload that is\n  not its own, so a handler can call all of them on each request.\n\n  `handleWebhook` now filters on the change's `field` and returns only genuine\n  inbound customer messages. This matters: history and echoes both carry message\n  payloads, and routing either into a bot is actively harmful — a back-fill would\n  replay up to 180 days of traffic as if it had just arrived, and an echo would\n  make the bot reply to its own operator. (A change with no `field` is still\n  treated as `messages`, so existing fixtures and older payloads parse unchanged.)\n\n  `parseHistory` labels each message inbound or outbound by comparing the sender\n  against the business number on digits alone, because WhatsApp writes that number\n  as `+1 555-0100` in history metadata but `15550100` on the message itself.\n  Chunks carry `phase`, `chunkOrder` and `progress`, since the back-fill spans\n  several webhooks and is only complete at `progress === 100`.\n\n  `requestSmbAppData()` triggers the contact and history sync, and\n  `getCoexistenceStatus()` reports `is_on_biz_app` / `platform_type`. Setting\n  `coexistence: true` in config makes the adapter advertise\n  `rateLimit: { perSecond: 20 }`, the fixed ceiling Meta applies to dual-platform\n  numbers, so `sendBulk` paces to the real limit instead of the API-only default.\n\n  The README documents the eligibility gates, which are easy to get wrong:\n  Coexistence needs Solution Partner or Tech Provider status and Embedded Signup\n  v4 on the integrator side, and on the customer side the WhatsApp Business _app_\n  at v2.24.17+ — not merely a WhatsApp Business Account, which every Cloud API\n  user already has. It also records the one-time, 24-hour sync limit and the\n  features the handset loses once onboarded.",
+        "packages": [
+          "@msgly/whatsapp"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.5.0",
+    "date": "2026-09-02",
+    "packageCount": 30,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/tiktok — video and photo publishing, comment replies and direct messages.",
+        "body": "Add `@msgly/tiktok` — video and photo publishing, comment replies and direct messages.\n\n  `publishVideo()` posts by URL pull or direct byte upload, in `DIRECT_POST` or\n  `INBOX` mode, and `publishPhotos()` posts carousels. Publishing is asynchronous\n  on TikTok's side, so both return a `publishId` for `getPublishStatus()`, and the\n  `post.publish.complete` webhook is surfaced through `onEvent()`. Privacy level\n  defaults to `SELF_ONLY`, because an unaudited app may only post privately.\n\n  `send()` covers both messaging surfaces, routed by `metadata.kind`. Comment\n  replies use the public Comment API and work with no extra setup; inbound\n  comments carry `videoId` and `commentId`, so replying straight back needs no\n  lookup. **Direct messages require `config.directMessages`**: TikTok publishes no\n  DM API on the open developer platform, and the business/partner messaging host\n  and auth differ per partner, so the endpoint is configuration rather than a\n  hardcoded URL. Unconfigured, a DM send fails with `tiktok_dm_not_configured` and\n  an explanation instead of being silently dropped.\n\n  Handles the TikTok-specific traps: the API returns **HTTP 200 with\n  `error.code: \"ok\"`** rather than signalling through status codes, so the\n  envelope is treated as the real result, with rate limits retryable and revoked\n  scopes permanent; `PULL_FROM_URL` failures name the URL-ownership verification\n  step; and the live API's misspelled `publicaly_available_post_id` field is read\n  under both spellings.\n\n  `send()` is text-only on both surfaces and the declared capabilities say so:\n  publishing sits outside `send()`, like `publishPost()` on the feed adapters, so\n  claiming media support here would make the hub wave a video message through to a\n  `send()` that must reject it.\n\n  Comments have no webhook, so inbound is polled per video with persistable\n  cursors — the first poll of an unseen video records the high-water mark without\n  replaying its history. Webhook signatures are verified against TikTok's\n  `t=…,s=…` HMAC-SHA256 scheme over the raw body, with a `webhookToleranceSec`\n  window (default 300) bounding replay of a captured request.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/tiktok"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.4.0",
+    "date": "2026-08-15",
+    "packageCount": 29,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/reddit — subreddit publishing, thread replies and inbox polling.",
+        "body": "Add `@msgly/reddit` — subreddit publishing, thread replies and inbox polling.\n\n  Scope is deliberate. The adapter publishes posts and _replies_ to threads and\n  messages that already exist, and ships **no bulk-DM helper**: unsolicited mass\n  DMs are spam under Reddit's content policy and get accounts shadowbanned, often\n  within one campaign. `send()` requires `metadata.thingId` naming what is being\n  replied to, and failing that returns an error explaining why and pointing at\n  `publishPost()` instead.\n\n  Handles the Reddit-specific traps: it returns **HTTP 200 with a populated\n  `errors` array** rather than an error status, so the array is treated as the\n  real result, and `RATELIMIT` is marked retryable while a locked thread is\n  permanent. The required descriptive `User-Agent` is enforced by\n  `verifyCredentials`, since Reddit throttles generic agents.\n\n  Reddit has no webhooks, so inbound is polled from the unread inbox with a\n  persistable cursor — the same model as the SMTP/IMAP adapter. Replies address\n  the _thing_ fullname rather than the username, because that is what\n  `/api/comment` expects back.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/reddit"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.3.0",
+    "date": "2026-08-15",
+    "packageCount": 28,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add native broadcast and feed publishing.",
+        "body": "Add native broadcast and feed publishing.\n\n  `sendBulk` fans a message out per recipient, which is right for email and SMS\n  but wrong for the channels that have a real broadcast primitive — reaching\n  100,000 LINE friends should be one request, not 100,000.\n\n  - **LINE** — `broadcast()` reaches every friend in one call, `multicast()` takes\n    a segment of up to 500, and `getQuotaRemaining()` reports the plan quota left.\n    Both accept a retry key, so a network timeout cannot double-send a campaign.\n  - **WeChat** — `massSend()` to all followers or one tag group, and\n    `massSendToUsers()` for up to 10,000 openids. An exhausted quota (4/month for\n    Service Accounts) is reported as a _retryable_ failure with the limit spelled\n    out, rather than an opaque error code.\n  - **Viber** — `broadcast()` to up to 300 subscribers per call. Viber reports\n    per-recipient outcomes, so failed ids come back in `metadata.failed` ready to\n    feed the suppression store.\n  - **Instagram** — `publishPost()` for feed posts and Reels, handling the\n    two-step container/publish flow.\n  - **Messenger** — `publishPost()` for Facebook Page posts, using the `photos`\n    edge for images and `feed` otherwise.\n\n  Publishing is deliberately a separate method rather than part of `send()`: a\n  post has no recipient, so forcing it through the message contract would\n  misrepresent it.\n\n  Telegram channel posting needed no change — a channel is just another `chat_id`,\n  so `@channelname` already worked. That is now documented.",
+        "packages": [
+          "@msgly/instagram",
+          "@msgly/line",
+          "@msgly/messenger",
+          "@msgly/viber",
+          "@msgly/wechat"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Documentation catch-up.",
+        "body": "Documentation catch-up. The code shipped ahead of the per-package docs, and npm\n  users only ever see the package README.\n\n  `@msgly/core`'s README documented none of the campaign or compliance API —\n  `sendBulk`, `SuppressionStore`, `applyConsentIntent`, `applyDeliveryReceipt` or\n  `List-Unsubscribe` — despite those being the reason to reach for it. All are now\n  covered, including the three behaviours that are easy to get wrong: suppressed\n  recipients are `skipped` rather than `failed`, an unreachable store skips the\n  send instead of proceeding, and only permanent failures suppress.\n\n  The LINE, WeChat, Viber, Instagram and Messenger READMEs now document\n  `broadcast`, `massSend`, `publishPost` and friends, with the constraints that\n  actually bite: LINE's retry key and monthly quota, WeChat's 4-per-month cap with\n  no undo, Viber's per-recipient failure list, Instagram's `igUserId` being the IG\n  account id rather than the Page id, and Facebook's `pages_manage_posts` scope.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/instagram",
+          "@msgly/line",
+          "@msgly/messenger",
+          "@msgly/viber",
+          "@msgly/wechat"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Cover the outbound path on the three thinnest-tested adapters.",
+        "body": "Cover the outbound path on the three thinnest-tested adapters.\n\n  All of WhatsApp's existing tests were webhook-side, so `send()` — including the\n  template branch every campaign depends on — had no coverage at all. Same story\n  for Telegram and Instagram.\n\n  Added tests for the parts most likely to break silently: WhatsApp's media\n  `id`-vs-`link` selection, the audio caption it rejects, the 3-button interactive\n  cap with 20-character labels, and `components` correctly winning over\n  `variables` on rich templates. Telegram's per-type method routing, its 2D inline\n  keyboard rows (flattening them would lose the grid), reply-vs-inline keyboards,\n  `@channelname` posting, and full MarkdownV2 escaping. Instagram's Send API\n  payload, `X-Hub-Signature-256` verification against a tampered body, echo-message\n  filtering, the GET challenge, and the OAuth helpers.\n\n  Also covers a case each of these shares: a `200` response carrying no message id\n  is a failed send, not a successful one.",
+        "packages": [
+          "@msgly/instagram",
+          "@msgly/telegram",
+          "@msgly/whatsapp"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.2.0",
+    "date": "2026-08-15",
+    "packageCount": 28,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/ses and @msgly/fcm.",
+        "body": "Add `@msgly/ses` and `@msgly/fcm`.\n\n  **Amazon SES** — the missing piece for high-volume campaign email, roughly 10×\n  cheaper than transactional providers at scale. AWS SigV4 signing is implemented\n  on Web Crypto, so there is no AWS SDK dependency and the adapter stays\n  Edge-compatible. SES's SNS notifications carry an explicit\n  `bounceType: Permanent | Transient`, which is the cleanest hard/soft signal of\n  any adapter here and maps straight onto the suppression store — important,\n  because SES suspends accounts over ~5% bounces or ~0.1% complaints.\n  `verifyCredentials` also surfaces the sandbox state, whose failure mode is a\n  campaign silently reaching almost nobody. Attachments and custom headers switch\n  the send to raw MIME automatically, since SES's `Simple` shape supports neither.\n\n  Note SNS signature verification is deliberately partial: the adapter validates\n  that the signing certificate URL is genuinely AWS-hosted — blocking the forged\n  bounce attack — but does not verify the RSA signature, which needs X.509\n  parsing Web Crypto does not provide. The README states this plainly rather than\n  implying full verification.\n\n  **FCM** — push notifications for Android, iOS and web, opening a channel\n  category the library did not cover. Two-legged service-account auth with a\n  cached token. Dead tokens (`UNREGISTERED`, `SENDER_ID_MISMATCH`) are marked\n  permanent so an uninstalled app stops consuming quota, read from\n  `error.details[].errorCode` rather than the generic top-level status.\n  `sendToTopic` covers true broadcast, which is far cheaper than looping over\n  device tokens.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/fcm",
+          "@msgly/ses"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.1.0",
+    "date": "2026-08-15",
+    "packageCount": 26,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/exotel — SMS for the Indian market.",
+        "body": "Add `@msgly/exotel` — SMS for the Indian market.\n\n  Sends via Exotel's REST API and receives inbound SMS from its callback, with\n  first-class DLT support (`dltEntityId` / `dltTemplateId`, overridable per\n  message so one campaign can span several registered templates) and\n  transactional vs. promotional routing.\n\n  Exotel does not sign its webhooks, so the adapter supports a `webhookToken`\n  shared secret checked in constant time against `?token=…`. Without it any caller\n  that reaches your endpoint can forge inbound SMS — the README says so plainly.\n\n  `verifyCredentials` distinguishes a bad key/token from an account that lives on\n  the other regional cluster, which otherwise surfaces as a confusing 404.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/exotel"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add attachment support and paced campaign sending.",
+        "body": "Add attachment support and paced campaign sending.\n\n  **Attachments** — messages can now carry files alongside their content via a new\n  `attachments` array, with `Attachment` and `AttachmentsConfig` types in core.\n  Support is opt-in per channel: pass `attachments: { enabled: true }` to an\n  adapter's config. Until you do, that adapter reports no file capability and the\n  hub rejects attachment sends rather than dropping them silently.\n\n  Gmail and Outlook gain full send and receive support — Gmail builds proper MIME\n  multipart bodies (including inline `cid:` images), Outlook uses Graph's\n  `fileAttachment` array. Inbound attachments are lazy: you get metadata and a\n  reference, and call `downloadMedia()` when you actually want the bytes.\n\n  **Campaigns** — new `hub.sendBulk()` fans one message out to many contacts with\n  concurrency control and per-channel rate limiting (a dependency-free token\n  bucket, with conservative defaults per platform in `CHANNEL_RATE_LIMITS`).\n  Content can be a function so each recipient gets their own template variables.\n  Individual failures never abort the run — `sendBulk` resolves with per-recipient\n  results and a `failures` list. Supports `AbortSignal` cancellation and an\n  `onProgress` callback. Adapters can advertise their own ceiling via a new\n  optional `Adapter.rateLimit`.\n\n  All changes are additive — existing code is unaffected.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/gmail",
+          "@msgly/outlook"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add List-Unsubscribe support to the Gmail and Outlook adapters, completing the set — all five email adapters now emit one-click unsubscribe headers via an unsubscribe config, overridable per message.",
+        "body": "Add `List-Unsubscribe` support to the Gmail and Outlook adapters, completing\n  the set — all five email adapters now emit one-click unsubscribe headers via an\n  `unsubscribe` config, overridable per message.\n\n  **Gmail** threads the headers through both MIME builders (plain and multipart),\n  so they survive whether or not the message carries attachments.\n\n  **Outlook** needed a different approach: Graph's JSON `internetMessageHeaders`\n  only accepts custom `x-` prefixed headers and silently drops\n  `List-Unsubscribe`, so configuring `unsubscribe` now routes the send through\n  Graph's MIME endpoint instead. That path builds RFC 5322 directly (multipart\n  when attachments are present) and enforces Graph's 4 MB MIME ceiling with a\n  clear error rather than a raw 413.\n\n  Header values are CRLF-sanitized on both adapters, so an unsubscribe URL\n  arriving from metadata cannot inject additional headers.",
+        "packages": [
+          "@msgly/gmail",
+          "@msgly/outlook"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/rocketchat and @msgly/googlechat.",
+        "body": "Add `@msgly/rocketchat` and `@msgly/googlechat`.\n\n  **Rocket.Chat** — self-hosted team chat over the v1 REST API, authenticated with\n  the `X-Auth-Token`/`X-User-Id` pair Rocket.Chat requires. Errors often arrive as\n  HTTP 200 with `success: false`, so the flag is treated as the real result rather\n  than reporting rejected messages as sent. Unsigned outgoing webhooks are guarded\n  by a constant-time token check, and `bot`-marked posts are dropped to avoid a\n  reply loop. The room is the addressable id; replies thread via `tmid`.\n\n  **Google Chat** — two-legged service-account auth: an RS256 JWT assertion is\n  signed with Web Crypto and exchanged for a cached OAuth token, with concurrent\n  refreshes collapsed. Inbound requests carry a Google-signed bearer JWT, verified\n  against Google's JWKS with `iss`/`aud`/`exp`/`nbf` checked and `alg` pinned to\n  RS256 so algorithm-confusion attempts fail. Inbound text prefers `argumentText`\n  (the @mention stripped), `CARD_CLICKED` events surface as interactions, and\n  threaded replies set `messageReplyOption` — without it a reply silently starts a\n  new thread.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/googlechat",
+          "@msgly/rocketchat"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Fill in genuine media gaps in the Teams and LINE adapters.",
+        "body": "Fill in genuine media gaps in the Teams and LINE adapters.\n\n  Microsoft Teams now sends `video` and `audio` content — Bot Framework\n  attachments are content-type agnostic, so these take the same path as images\n  and files, and the capability flags were understating what the adapter could\n  do.\n\n  LINE now parses inbound `file` messages instead of silently dropping them.\n  Users can send files to a LINE bot even though the Messaging API has no file\n  message type to send back, so this is receive-only and `capabilities.media.file`\n  stays `false`. `downloadMedia` also preserves the filename and MIME type from\n  the reference.",
+        "packages": [
+          "@msgly/line",
+          "@msgly/msteams"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/viber and @msgly/mattermost.",
+        "body": "Add `@msgly/viber` and `@msgly/mattermost`.\n\n  **Viber** — Business Messages with rich media, keyboards, and HMAC-SHA256\n  webhook verification over the raw body. Viber answers HTTP 200 even for\n  failures, so the adapter treats the JSON `status` field as the real result\n  rather than reporting rejected messages as sent. Keyboards flatten 2D button\n  layouts and cap at Viber's 24-button maximum, and the sender name is truncated\n  to its 28-character limit. Includes `setWebhook`/`removeWebhook` helpers.\n\n  **Mattermost** — self-hosted team chat over the v4 REST API. Mattermost does not\n  sign outgoing-webhook bodies, so a shared `webhookToken` is compared in constant\n  time. The bot's own echoed posts are dropped to avoid a reply loop. Because the\n  conversation is a channel rather than a person, `contact.channelUserId` carries\n  the channel id while the speaking user lands in metadata; replies can be\n  threaded via `metadata.postId`. Files attach by id, so `uploadMedia` is required\n  and a URL reference fails fast.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/mattermost",
+          "@msgly/viber"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/msg91 — India SMS via MSG91's DLT Flow API.",
+        "body": "Add `@msgly/msg91` — India SMS via MSG91's DLT Flow API.\n\n  Unlike the other SMS adapters this one declares `templates: true`, because\n  MSG91's v5 API is template-first: DLT regulation forbids arbitrary text.\n  `TemplateContent` names a registered template directly, while `TextContent` is\n  injected into a configurable variable of `defaultTemplateId`, overridable per\n  message via `metadata.templateId`. Sending text with no template resolved fails\n  with an actionable error before spending an API call.\n\n  Handles two MSG91 quirks that otherwise cause silent misreporting: a failed send\n  returns `type: 'error'` on HTTP 200, and an invalid auth key returns an error\n  string on HTTP 200. Phone numbers are normalised to the bare digits MSG91\n  expects. Inbound parsing accepts the several field spellings MSG91 uses across\n  its product lines, and `webhookToken` guards the unsigned webhook.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/msg91"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/plivo and @msgly/resend.",
+        "body": "Add `@msgly/plivo` and `@msgly/resend`.\n\n  **Plivo** — global SMS and MMS with V3 webhook signature verification\n  (`base64(HMAC-SHA256(authToken, url + nonce))`), accepting multiple\n  comma-separated signatures so key rotation doesn't cause an outage. Because\n  Plivo signs the URL, `webhookUrl` must match exactly, and the README says so.\n  MMS with a non-URL media reference fails fast rather than being rejected by the\n  API, since Plivo has no upload endpoint.\n\n  **Resend** — transactional email over HTTP, so unlike `@msgly/smtp` it is\n  Edge-compatible. Verifies Svix-signed webhooks including a timestamp window that\n  bounds replay. Delivery events (`email.sent`/`delivered`/`bounced`/…) are\n  deliberately kept out of `handleWebhook` and exposed via `parseDeliveryEvent`\n  instead, so status updates don't pollute the inbound message handler.\n  `verifyCredentials` checks that the sending domain is registered _and verified_,\n  which is the usual cause of a confusing first-send 422.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/plivo",
+          "@msgly/resend"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Suppress recipients automatically on hard bounces and spam complaints.",
+        "body": "Suppress recipients automatically on hard bounces and spam complaints.\n\n  `DeliveryReceipt.error` gains `permanent` and `complaint` flags, and\n  `applyDeliveryReceipt(receipt, channel, store)` feeds them into the suppression\n  store so a campaign list cleans itself:\n\n  ```ts\n  hub.on(\"delivery\", (r) => applyDeliveryReceipt(r, \"resend\", suppression));\n  ```\n\n  The classification is the point. **Only permanent failures suppress** — a\n  deferral, a full mailbox, or a temporary block leaves the address alone, and an\n  unclassifiable failure suppresses nothing, since wrongly dropping a deliverable\n  address is worse than a wasted retry.\n\n  Resend marks `email.bounced` and `email.complained` permanent while leaving\n  `email.delivery_delayed` transient. SendGrid needs more care: it reports hard\n  bounces and temporary blocks through the _same_ `bounce` event, separated only\n  by a `type` field, so `type: 'blocked'`, `deferred`, and `blocked` are treated\n  as transient while `bounce`, `dropped`, and `spamreport` are permanent.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/resend",
+          "@msgly/sendgrid"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add opt-out handling to campaigns.",
+        "body": "Add opt-out handling to campaigns.\n\n  `sendBulk` previously sent to every recipient unconditionally, with no way to\n  honour an opt-out. Honouring opt-outs is a legal requirement — TCPA and\n  TRAI/DLT for SMS, CAN-SPAM and GDPR for email — so this closes a real gap\n  rather than adding a convenience.\n\n  - **`SuppressionStore`** — consulted before each send. Suppressed recipients are\n    reported as a new `skipped` result rather than `failed`, because nothing went\n    wrong and retrying them would be the violation. In-memory and KV-backed\n    implementations ship with core; set it once via\n    `createHub({ suppressionStore })` or per call. Pass `suppression: false` to\n    bypass for genuinely transactional sends.\n  - The check runs **before** a rate-limit token is taken, so suppressed\n    recipients cost no campaign throughput, and it **fails closed** — if the store\n    is unreachable the send is skipped and reported as failed, since not sending\n    is the recoverable mistake.\n  - **`detectConsentIntent` / `applyConsentIntent`** — recognise STOP, UNSUBSCRIBE,\n    CANCEL and their non-English equivalents (plus START to resubscribe) and apply\n    them to the store. Matching is whole-message only, so \"please stop sending the\n    weekly digest\" is not treated as a global opt-out.\n  - **`List-Unsubscribe` / `List-Unsubscribe-Post`** on the SMTP, Resend and\n    SendGrid adapters via a new `unsubscribe` config, overridable per message for\n    per-recipient tokens. Gmail and Yahoo have required these from bulk senders\n    since February 2024. `List-Unsubscribe-Post` is emitted only when a URL is\n    present, since one-click is an HTTP mechanism.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/resend",
+          "@msgly/sendgrid",
+          "@msgly/smtp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/telnyx and @msgly/sendgrid.",
+        "body": "Add `@msgly/telnyx` and `@msgly/sendgrid`.\n\n  **Telnyx** — global SMS/MMS verified with Ed25519 over `\"{timestamp}|{body}\"`,\n  plus a timestamp window bounding replay. Verification fails closed when the\n  runtime's Web Crypto lacks Ed25519, rather than silently accepting unverified\n  webhooks.\n\n  **SendGrid** — transactional email over HTTP, Edge-compatible. Handles the two\n  differently-secured webhooks explicitly: the unsigned Inbound Parse endpoint is\n  guarded by a URL token and produces messages, while the ECDSA-signed Event\n  Webhook produces receipts via `parseDeliveryEvents`. The ECDSA signature is\n  DER-encoded and is converted to the P1363 form Web Crypto requires — passing DER\n  straight through fails every time. Reads the message id from the `X-Message-Id`\n  header, since `/v3/mail/send` returns 202 with an empty body, and\n  `verifyCredentials` confirms the key actually carries the `mail.send` scope.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/sendgrid",
+          "@msgly/telnyx"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Add the missing root ESLint configuration.",
+        "body": "Add the missing root ESLint configuration. `pnpm lint` failed in every package\n  with \"ESLint couldn't find a configuration file\", so the lint script had never\n  actually run. Enabling it surfaced two unused imports, now removed.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/slack",
+          "@msgly/wechat"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/smtp — an SMTP + IMAP adapter covering Yahoo, Zoho, Fastmail, iCloud, AOL, and any custom mail server.",
+        "body": "Add `@msgly/smtp` — an SMTP + IMAP adapter covering Yahoo, Zoho, Fastmail,\n  iCloud, AOL, and any custom mail server.\n\n  Sends via SMTP (plain-text or HTML bodies, threaded replies, optional\n  attachments) and receives via IMAP polling with a persistable UID cursor so\n  restarts resume where they left off. Omit the `imap` config for a send-only\n  adapter.\n\n  This package is **Node-only** — SMTP and IMAP are raw TCP/TLS protocols that\n  `fetch` cannot speak, so unlike the other adapters it does not run on Edge or in\n  a browser. It depends on `nodemailer` and `imapflow`.\n\n  Core's `ChannelName` is now open (`KnownChannel | (string & {})`), so\n  third-party adapters can define their own channel without a core release.\n  Built-in channel names keep autocomplete.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/smtp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/vonage-sms — global SMS via Vonage (Nexmo).",
+        "body": "Add `@msgly/vonage-sms` — global SMS via Vonage (Nexmo).\n\n  Correctly treats Vonage's per-message `status` code as the result rather than\n  the HTTP status, which is always 200 even for rejected messages, and translates\n  the common failure codes into readable explanations. Non-GSM-7 text is\n  automatically sent as `unicode` so emoji and non-Latin scripts are not mangled.\n\n  Supports signed webhooks: pass `signatureSecret` and the adapter verifies the\n  HMAC over sorted parameters in constant time. The legacy `md5hash` scheme is\n  explicitly rejected with guidance rather than silently accepting unverified\n  requests, since Web Crypto has no MD5.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/vonage-sms"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Harden WeChat webhook signature verification.",
+        "body": "Harden WeChat webhook signature verification.\n\n  - Compare the computed signature in constant time. Every other adapter already\n    did this; WeChat used `===`, which leaks the expected digest byte by byte\n    through response timing.\n  - Reject stale timestamps (default window: 5 minutes, configurable via\n    `maxTimestampSkewSec`, `0` to disable). WeChat's signature covers only\n    `token + timestamp + nonce` and not the request body, so a single captured\n    triple previously stayed valid indefinitely and could be replayed with an\n    attacker-chosen payload.",
+        "packages": [
+          "@msgly/wechat"
+        ]
+      },
+      {
+        "kind": "Patch",
+        "headline": "Repository and packaging fixes.",
+        "body": "Repository and packaging fixes.\n\n  - **Add the MIT LICENSE.** Every package declared `\"license\": \"MIT\"` with no\n    licence text anywhere in the repo. The file is now present and, critically,\n    listed in each package's `files` array so it actually ships in the published\n    tarball rather than only living in git.\n  - **Declare `engines: node >=18` on every package.** Only `@msgly/smtp` did.\n    Every adapter needs `fetch` and Web Crypto, so a Node 16 user previously got\n    a confusing runtime crash instead of an install-time warning.\n  - **Add CI.** The README has always shown a CI badge pointing at\n    `.github/workflows/ci.yml`, which did not exist — nothing verified the test\n    suite on a pull request. The workflow builds, typechecks, lints and tests\n    across Node 18/20/22, and a second job verifies all 26 packages actually pack\n    with `dist/`, `README.md` and `LICENSE` before any release is attempted.\n  - **Remove the stale `package-lock.json`.** This is a pnpm workspace; the npm\n    lockfile caused wrong installs, and it is now gitignored.\n  - Add the missing `@msgly/twilio-sms` and `@msgly/twilio-voice` READMEs, so all\n    26 packages document themselves.",
+        "packages": [
+          "@msgly/core"
+        ]
+      }
+    ]
+  }
+]

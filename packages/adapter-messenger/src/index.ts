@@ -79,7 +79,7 @@ export function createMessengerAdapter(config: MessengerConfig): MessengerAdapte
       throw new Error('publishPost needs at least one of message, link or photoUrl.');
     }
 
-    const apiBase = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v20.0'}`;
+    const apiBase = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v23.0'}`;
     // A photo post uses a different edge from a plain status.
     const edge = options.photoUrl ? 'photos' : 'feed';
 

@@ -34,6 +34,16 @@ export interface InstagramPostResult {
 export interface InstagramAdapter extends Adapter {
   readonly channel: 'instagram';
   /**
+   * React to a message. Instagram accepts only a fixed set of reaction names
+   * (`love`, `like`, `care`, `haha`, `wow`, `sad`, `angry`) — not unicode
+   * emoji. Pass an empty string to remove the reaction.
+   */
+  sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
+  /**
    * Publish a post to the Instagram feed.
    *
    * This is **content publishing, not messaging** — a post has no recipient,
@@ -291,7 +301,7 @@ export function createInstagramAdapter(config: InstagramConfig): InstagramAdapte
       throw new Error('publishPost needs either imageUrl or videoUrl.');
     }
 
-    const base = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v20.0'}`;
+    const base = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v23.0'}`;
 
     // Step 1 — container. Instagram downloads the media here, so a failure at
     // this point is almost always an unreachable URL.
@@ -348,10 +358,59 @@ export function createInstagramAdapter(config: InstagramConfig): InstagramAdapte
     return { id: published.id, containerId: container.id };
   }
 
+  /**
+   * Instagram's Messaging API accepts a fixed set of reaction names — unlike
+   * WhatsApp it will not take an arbitrary unicode glyph.
+   */
+  const IG_REACTIONS = new Set(['love', 'like', 'care', 'haha', 'wow', 'sad', 'angry']);
+
+  async function sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const base = `${config.apiBase ?? 'https://graph.facebook.com'}/${config.apiVersion ?? 'v23.0'}`;
+    const url = `${base}/me/messages?access_token=${encodeURIComponent(config.pageAccessToken)}`;
+
+    const body = emoji
+      ? {
+          recipient: { id: contact.channelUserId },
+          sender_action: 'react',
+          payload: { message_id: externalMessageId, reaction: emoji },
+        }
+      : {
+          recipient: { id: contact.channelUserId },
+          sender_action: 'unreact',
+          payload: { message_id: externalMessageId },
+        };
+
+    if (emoji && !IG_REACTIONS.has(emoji)) {
+      throw new Error(
+        `[msgly/instagram] sendReaction: "${emoji}" is not a valid Instagram reaction. ` +
+          `Use one of: ${[...IG_REACTIONS].join(', ')}. Pass an empty string to remove.`,
+      );
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: { message?: string };
+      };
+      throw new Error(
+        `[msgly/instagram] sendReaction failed: ${data.error?.message ?? `HTTP ${res.status}`}`,
+      );
+    }
+  }
+
   return {
     channel: 'instagram',
     capabilities: CAPABILITIES,
     ...base,
+    sendReaction,
     publishPost,
     getAuthUrl,
     exchangeCode,

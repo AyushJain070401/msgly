@@ -245,6 +245,15 @@ export function createDiscordAdapter(config: DiscordConfig): DiscordAdapter {
 
     const payload = toDiscordPayload(message.content);
 
+    // fail_if_not_exists:false → a deleted parent degrades to a normal message
+    // instead of erroring the whole send.
+    if (message.replyTo) {
+      payload['message_reference'] = {
+        message_id: message.replyTo,
+        fail_if_not_exists: false,
+      };
+    }
+
     const res = await fetch(url, {
       method,
       headers: botHeaders(),

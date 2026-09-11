@@ -132,11 +132,58 @@ export interface TemplateContent {
   components?: unknown[];
 }
 
+/** One selectable row inside a {@link ListContent} section. */
+export interface ListRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface ListSection {
+  title?: string;
+  rows: ListRow[];
+}
+
+/**
+ * A list picker — body text plus a button that opens a scrollable, sectioned
+ * menu of choices. Use this instead of {@link InteractiveContent} when there
+ * are more options than a row of buttons can hold.
+ *
+ * Only adapters reporting `capabilities.interactive.lists` accept this; the
+ * hub throws `UnsupportedFeature` for the rest rather than silently degrading.
+ */
+export interface ListContent {
+  type: 'list';
+  text: string;
+  /** Label on the button that opens the list. */
+  buttonLabel: string;
+  sections: ListSection[];
+  header?: string;
+  footer?: string;
+}
+
+/**
+ * Body text plus a single button that opens a URL, so the raw link does not
+ * have to appear in the message body.
+ *
+ * Only adapters reporting `capabilities.interactive.ctaUrl` accept this.
+ */
+export interface CtaUrlContent {
+  type: 'cta_url';
+  text: string;
+  buttonLabel: string;
+  url: string;
+  header?: string;
+  footer?: string;
+}
+
 export type MessageContent =
   | TextContent
   | MediaContent
   | LocationContent
   | InteractiveContent
+  | ListContent
+  | CtaUrlContent
   | TemplateContent;
 
 // ---------- Media references ----------
@@ -233,6 +280,18 @@ interface BaseMessage {
    * `UnsupportedFeature` rather than dropping the files silently.
    */
   attachments?: Attachment[];
+  /**
+   * Send this message as a threaded reply to an existing one.
+   *
+   * The value is the *platform's* message id — `InboundMessage.externalId` or
+   * `DeliveryReceipt.externalId` — not the library's internal `id`.
+   *
+   * Adapters map it to their native equivalent: WhatsApp `context.message_id`,
+   * Telegram `reply_to_message_id`, Slack `thread_ts`, Discord
+   * `message_reference`. Channels with no threading concept ignore it rather
+   * than failing, so setting it is always safe.
+   */
+  replyTo?: string;
   /** ISO 8601 timestamp. */
   timestamp: string;
   /** Free-form metadata for the developer to attach. */

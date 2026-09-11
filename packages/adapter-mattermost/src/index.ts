@@ -41,6 +41,21 @@ export interface MattermostConfig {
 
 export interface MattermostAdapter extends Adapter {
   readonly channel: 'mattermost';
+  /**
+   * React to a post. `emoji` is a Mattermost emoji *name* (`thumbsup` or
+   * `:thumbsup:`), not a unicode glyph. Pass an empty string to remove.
+   */
+  sendReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
+  /** Remove one named reaction this bot previously added to a post. */
+  removeReaction(
+    contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
   /** Resolve a channel id from a team name and channel name. */
   getChannelId(teamName: string, channelName: string): Promise<string | null>;
 }
@@ -334,6 +349,76 @@ export function createMattermostAdapter(config: MattermostConfig): MattermostAda
     return data.id ?? null;
   }
 
+  async function removeReaction(
+    _contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const emojiName = emoji.replace(/^:|:$/g, '');
+    if (!emojiName) {
+      throw new Error(
+        '[msgly/mattermost] removeReaction requires the emoji name to remove, e.g. "thumbsup".',
+      );
+    }
+    const userId = await getBotUserId();
+    const res = await fetch(
+      `${apiBase}/users/${encodeURIComponent(userId)}/posts/${encodeURIComponent(externalMessageId)}/reactions/${encodeURIComponent(emojiName)}`,
+      { method: 'DELETE', headers: authHeaders() },
+    );
+    if (!res.ok) {
+      throw new Error(`[msgly/mattermost] removeReaction failed: HTTP ${res.status}`);
+    }
+  }
+
+  /** Cached id of the authenticated bot user — required on every reaction. */
+  let botUserId: string | undefined;
+
+  async function getBotUserId(): Promise<string> {
+    if (botUserId) return botUserId;
+    const res = await fetch(`${apiBase}/users/me`, { headers: authHeaders() });
+    const data = (await res.json().catch(() => ({}))) as { id?: string };
+    if (!res.ok || !data.id) {
+      throw new Error(
+        `[msgly/mattermost] sendReaction could not resolve the bot user id (HTTP ${res.status}).`,
+      );
+    }
+    botUserId = data.id;
+    return botUserId;
+  }
+
+  async function sendReaction(
+    _contact: import('@msgly/core').ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void> {
+    // Mattermost identifies emoji by name, not by unicode glyph.
+    const emojiName = emoji.replace(/^:|:$/g, '');
+    if (!emojiName) {
+      // Unlike WhatsApp/Telegram, Mattermost removes one *named* reaction —
+      // there is no "clear whatever I reacted with" call. Use removeReaction.
+      throw new Error(
+        '[msgly/mattermost] sendReaction requires an emoji name. To remove a reaction, call removeReaction(contact, postId, emojiName).',
+      );
+    }
+    const userId = await getBotUserId();
+
+    const res = await fetch(`${apiBase}/reactions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        user_id: userId,
+        post_id: externalMessageId,
+        emoji_name: emojiName,
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(
+        `[msgly/mattermost] sendReaction failed: ${data.message ?? `HTTP ${res.status}`}`,
+      );
+    }
+  }
+
   async function uploadMedia(file: MediaFile): Promise<MediaReference> {
     const channelId = config.defaultChannelId;
     if (!channelId) {
@@ -463,6 +548,8 @@ export function createMattermostAdapter(config: MattermostConfig): MattermostAda
     verifyCredentials,
     uploadMedia,
     downloadMedia,
+    sendReaction,
+    removeReaction,
     getChannelId,
   };
 }

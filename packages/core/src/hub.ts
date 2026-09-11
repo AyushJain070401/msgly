@@ -263,6 +263,8 @@ export function createHub(options: HubOptions = {}): Hub {
       file: c.media.file,
       location: true,
       interactive: c.interactive.buttons,
+      list: c.interactive.lists ?? false,
+      cta_url: c.interactive.ctaUrl ?? false,
       template: c.templates,
     };
     if (!supported[contentType]) {

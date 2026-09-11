@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 4321",
-    "build": "next build",
+    "build": "node scripts/gen-changelog.mjs && next build",
     "gen:icons": "node scripts/gen-icons.mjs",
+    "gen:changelog": "node scripts/gen-changelog.mjs",
     "start": "next start"
   },
   "dependencies": {

@@ -25,6 +25,10 @@ export interface AdapterCapabilities {
   interactive: {
     buttons: boolean;
     quickReplies: boolean;
+    /** Sectioned list picker (`ListContent`). Optional — defaults to false. */
+    lists?: boolean;
+    /** Single URL button (`CtaUrlContent`). Optional — defaults to false. */
+    ctaUrl?: boolean;
   };
   templates: boolean;
   reactions: boolean;
@@ -133,6 +137,24 @@ export interface Adapter {
    * platform supports it. Callers should guard: `await adapter.sendTyping?.(contact)`.
    */
   sendTyping?(contact: ContactRef): Promise<void>;
+
+  /**
+   * React to an existing message with an emoji. Optional — only implement when
+   * the platform supports it. Callers should guard:
+   * `await adapter.sendReaction?.(contact, externalId, '👍')`.
+   *
+   * Pass an empty string as `emoji` to remove a previously sent reaction on
+   * platforms that model removal that way (WhatsApp, Telegram).
+   *
+   * `externalMessageId` is the platform's own id for the message being reacted
+   * to — i.e. `InboundMessage.externalId` or `DeliveryReceipt.externalId`,
+   * not the library's internal `messageId`.
+   */
+  sendReaction?(
+    contact: ContactRef,
+    externalMessageId: string,
+    emoji: string,
+  ): Promise<void>;
 
   /** Optional lifecycle hook — e.g. start long polling, register webhooks. */
   start?(): Promise<void>;

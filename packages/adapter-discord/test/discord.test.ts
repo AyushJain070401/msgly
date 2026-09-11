@@ -216,3 +216,53 @@ describe('createDiscordAdapter', () => {
     expect(bad).toBe(false);
   });
 });
+
+describe('replyTo threading', () => {
+  const originalFetch = globalThis.fetch;
+
+  function mockSend() {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ id: 'msg-1' }) } as Response;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  const base = {
+    id: 'm-1',
+    direction: 'outbound' as const,
+    channel: 'discord' as const,
+    account: { channel: 'discord' as const, channelAccountId: 'app-123' },
+    contact: { channel: 'discord' as const, channelUserId: 'chan-1' },
+    content: { type: 'text' as const, text: 'hi' },
+    timestamp: new Date().toISOString(),
+  };
+
+  const bodyOf = (calls: Array<{ init?: RequestInit }>) =>
+    JSON.parse(calls[0]!.init!.body as string);
+
+  it('maps replyTo to a non-fatal message_reference', async () => {
+    const calls = mockSend();
+    try {
+      await createDiscordAdapter(baseConfig).send({ ...base, replyTo: '123456' });
+      expect(bodyOf(calls).message_reference).toEqual({
+        message_id: '123456',
+        // A deleted parent must degrade to a plain message, not fail the send.
+        fail_if_not_exists: false,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('omits message_reference when replyTo is unset', async () => {
+    const calls = mockSend();
+    try {
+      await createDiscordAdapter(baseConfig).send(base);
+      expect(bodyOf(calls)).not.toHaveProperty('message_reference');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

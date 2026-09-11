@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { REPO } from '../data';
 
@@ -11,7 +12,12 @@ const LINKS = [
   { href: '#architecture', label: 'Architecture' },
 ];
 
-export default function Nav() {
+/**
+ * `home` is false on standalone routes (the changelog), where the section
+ * anchors have to navigate back to `/` first. next/link applies basePath, which
+ * a bare `<a href="/#channels">` would not.
+ */
+export default function Nav({ home = true }: { home?: boolean }) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -24,15 +30,32 @@ export default function Nav() {
   return (
     <nav className={`nav${scrolled ? ' scrolled' : ''}`}>
       <div className="wrap nav-inner">
-        <a className="brand" href="#top">
-          msgly
-        </a>
+        {home ? (
+          <a className="brand" href="#top">
+            msgly
+          </a>
+        ) : (
+          <Link className="brand" href="/">
+            msgly
+          </Link>
+        )}
         <div className="nav-links">
-          {LINKS.map((l) => (
-            <a key={l.href} href={l.href} className="hide-sm">
-              {l.label}
-            </a>
-          ))}
+          {LINKS.map((l) =>
+            home ? (
+              <a key={l.href} href={l.href} className="hide-sm">
+                {l.label}
+              </a>
+            ) : (
+              <Link key={l.href} href={`/${l.href}`} className="hide-sm">
+                {l.label}
+              </Link>
+            ),
+          )}
+          {home ? (
+            <Link href="/changelog/" className="hide-sm">
+              Changelog
+            </Link>
+          ) : null}
           <a className="btn star" href={REPO} target="_blank" rel="noreferrer">
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden focusable="false">
               <path

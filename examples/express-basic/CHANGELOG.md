@@ -1,5 +1,20 @@
 # express-basic
 
+## 0.1.10
+
+### Patch Changes
+
+- @msgly/discord@1.7.0
+- @msgly/gmail@1.7.0
+- @msgly/instagram@1.7.0
+- @msgly/line@1.7.0
+- @msgly/messenger@1.7.0
+- @msgly/msteams@1.7.0
+- @msgly/outlook@1.7.0
+- @msgly/telegram@1.7.0
+- @msgly/whatsapp@1.7.0
+- @msgly/core@1.7.0
+
 ## 0.1.9
 
 ### Patch Changes

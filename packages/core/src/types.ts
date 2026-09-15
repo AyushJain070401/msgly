@@ -33,7 +33,16 @@ export type KnownChannel =
   | 'reddit'
   | 'tiktok'
   | 'twilio-sms'
-  | 'twilio-voice';
+  | 'twilio-voice'
+  | 'apns'
+  | 'web-push'
+  | 'expo-push'
+  | 'rcs-twilio'
+  | 'plivo-voice'
+  | 'vonage-voice'
+  | 'exotel-voice'
+  | 'mailgun'
+  | 'postmark';
 
 /**
  * A channel identifier. Open by design: `(string & {})` keeps autocomplete for
@@ -177,6 +186,52 @@ export interface CtaUrlContent {
   footer?: string;
 }
 
+/**
+ * One tappable action on a {@link CardContent}.
+ *
+ * RCS calls these suggestions and allows a mix of kinds on one card, which is
+ * why this is a discriminated shape rather than the plain id/label pair
+ * {@link InteractiveButton} uses.
+ */
+export interface CardAction {
+  /**
+   * - `reply` — sends `id` back as an inbound `interaction.data`, like a
+   *   postback.
+   * - `url` — opens `url` in the browser.
+   * - `dial` — dials `phoneNumber`.
+   */
+  type: 'reply' | 'url' | 'dial';
+  label: string;
+  /** Postback payload, required for `reply` and ignored otherwise. */
+  id?: string;
+  /** Required for `url`. */
+  url?: string;
+  /** Required for `dial`, in E.164. */
+  phoneNumber?: string;
+}
+
+/**
+ * A rich card — media, text and actions in one message.
+ *
+ * This is the shape RCS, and branded business messaging generally, actually
+ * sends: an image across the top, a headline, a paragraph, and a row of
+ * suggestions. {@link CtaUrlContent} covers the text-plus-one-link case;
+ * this covers the case where the picture is the point.
+ *
+ * Only adapters reporting `capabilities.interactive.cards` accept it; the hub
+ * throws `UnsupportedFeature` for the rest rather than silently flattening a
+ * card into a paragraph of text.
+ */
+export interface CardContent {
+  type: 'card';
+  /** Headline above the body. */
+  title?: string;
+  text: string;
+  /** Media shown at the top of the card. */
+  mediaRef?: MediaReference;
+  actions?: CardAction[];
+}
+
 export type MessageContent =
   | TextContent
   | MediaContent
@@ -184,6 +239,7 @@ export type MessageContent =
   | InteractiveContent
   | ListContent
   | CtaUrlContent
+  | CardContent
   | TemplateContent;
 
 // ---------- Media references ----------
@@ -340,20 +396,43 @@ export interface DeliveryReceipt {
   /** The contact (recipient) this status refers to — useful for multi-conversation reconciliation. */
   recipientId?: string;
   error?: {
-    /** Raw platform error code (e.g. "131000" on WhatsApp). No prefix applied. */
+    /**
+     * The platform's own error code, namespaced by channel so codes from
+     * different platforms never collide: `"wa_131026"`, `"twilio_21211"`,
+     * `"smtp_550"`. The same failure carries the same code whether it arrived
+     * on a send response or a later status webhook.
+     */
     code: string;
     message: string;
     /**
-     * Whether the failure is permanent.
+     * Whether the failure is permanent **for this recipient**.
      *
-     * - `true` — the address is dead (hard bounce, invalid recipient). Safe to
-     *   suppress; retrying will never succeed.
+     * - `true` — the address is dead (hard bounce, invalid recipient, not a
+     *   user of the platform). Safe to suppress; retrying will never succeed.
      * - `false` — transient (mailbox full, deferred, rate limited). Must NOT
      *   be suppressed; the address is probably fine.
      * - `undefined` — the adapter could not tell. Treated as transient, since
      *   wrongly suppressing a good address is the worse error.
+     *
+     * This is about the *recipient*, not the request: a missing template or a
+     * bad access token fails permanently but says nothing about the address,
+     * so it leaves this undefined and sets {@link retryable} to `false`.
      */
     permanent?: boolean;
+    /**
+     * Whether sending the exact same message again could plausibly succeed.
+     *
+     * - `false` — never retry (bad credentials, malformed request, unknown
+     *   template, closed messaging window). The hub gives up immediately
+     *   instead of burning the retry budget on a request that cannot work.
+     * - `true` — retry is worth it (throttle, upstream outage, timeout).
+     * - `undefined` — the adapter could not tell; the hub falls back to its
+     *   own heuristic and retries.
+     *
+     * Distinct from {@link permanent}, which decides *suppression*. A wrong
+     * template name is `retryable: false` but must not suppress anyone.
+     */
+    retryable?: boolean;
     /** True when the recipient reported the message as spam. */
     complaint?: boolean;
   };

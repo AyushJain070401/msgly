@@ -75,7 +75,9 @@ export default function ChangelogList({ releases }: { releases: Release[] }) {
                   <h2 id={`v${rel.version}`}>
                     <a href={`#v${rel.version}`}>v{rel.version}</a>
                   </h2>
-                  <span className={`tag ${rel.date ? '' : 'warn'}`}>{formatDate(rel.date)}</span>
+                  <span className={`tag ${rel.date ? '' : 'warn'}`}>
+                    {rel.pending ? 'Next release · unpublished' : formatDate(rel.date)}
+                  </span>
                   <span className="cl-meta">{rel.packageCount} packages</span>
                 </header>
 

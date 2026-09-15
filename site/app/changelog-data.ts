@@ -15,6 +15,11 @@ export type Release = {
   version: string;
   /** ISO date from the release tag, or null when not yet tagged. */
   date: string | null;
+  /**
+   * True for a release assembled from changesets that are merged but not yet
+   * versioned or published. The version is the one changesets will pick.
+   */
+  pending: boolean;
   packageCount: number;
   notes: ReleaseNote[];
 };
@@ -25,4 +30,9 @@ export type Release = {
  */
 export const releases: Release[] = raw as Release[];
 
-export const latestVersion = releases[0]?.version ?? '';
+/**
+ * The newest version actually on npm. A pending release is deliberately skipped:
+ * telling someone to install a version that does not exist yet is worse than
+ * showing them one release behind.
+ */
+export const latestVersion = releases.find((r) => !r.pending)?.version ?? '';

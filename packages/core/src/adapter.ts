@@ -29,6 +29,8 @@ export interface AdapterCapabilities {
     lists?: boolean;
     /** Single URL button (`CtaUrlContent`). Optional — defaults to false. */
     ctaUrl?: boolean;
+    /** Rich card — media, text and actions (`CardContent`). Optional — defaults to false. */
+    cards?: boolean;
   };
   templates: boolean;
   reactions: boolean;

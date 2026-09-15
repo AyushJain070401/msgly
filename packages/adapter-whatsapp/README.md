@@ -204,6 +204,26 @@ await hub.send({
 
 `MediaFile.data` accepts `Uint8Array | Blob | ReadableStream<Uint8Array>` — pass whichever your environment naturally produces.
 
+### Documents
+
+Set `mediaRef.filename` to control the name the recipient sees. Without it
+WhatsApp names the file after the URL it fetched, which is rarely readable:
+
+```typescript
+content: {
+  type: 'file',
+  mediaRef: {
+    kind: 'url',
+    value: 'https://example.com/d/9f2c',
+    filename: 'invoice-0042.pdf',   // what the recipient sees
+  },
+}
+```
+
+`uploadMedia` carries `filename` onto the ref it returns, so an uploaded
+document keeps its name too. Inbound documents arrive with the sender's
+filename on `mediaRef.filename`.
+
 ### Interactive buttons
 
 ```typescript
@@ -226,8 +246,13 @@ User taps a button → you receive an inbound message where `content.text` is th
 ### List picker
 
 When there are more choices than three buttons can hold. Up to 10 rows total
-across all sections; over-long labels are truncated to Meta's limits rather than
+across all sections; sections are filled in order and any beyond the tenth row
+are dropped. Over-long labels — button, section title, row title, row
+description, header, footer — are truncated to Meta's limits rather than
 rejected by the API.
+
+Body text and row/button `id`s are never touched: truncating a body would lose
+your message, and truncating an `id` would silently break postback matching.
 
 ```typescript
 await hub.send({
@@ -686,11 +711,32 @@ const receipts = adapter.parseStatuses(req.body);
 //   messageId: 'wamid.xxx',
 //   recipientId: '919999999999',  // which contact the status is for
 //   timestamp: '...',
-//   error?: { code: '131000', message: '...' }  // raw Meta error code, no prefix
+//   error?: { code: 'wa_131026', message: '...', permanent: true, retryable: false }
 // }]
 ```
 
-`error.code` is the raw Meta numeric code as a string (e.g. `"131000"`) — no `wa_` prefix.
+### Error codes
+
+`error.code` is Meta's numeric code with a `wa_` prefix (`"wa_131026"`). A send
+response and a later status webhook report the same failure with the same code,
+so one check covers both paths.
+
+Two flags come with it, and they answer different questions:
+
+| Flag | Question | Set when |
+|---|---|---|
+| `permanent` | is this *recipient* dead? | only for `131021`/`131026` — the number cannot receive WhatsApp messages. A suppression store acts on this. |
+| `retryable` | could the same request ever succeed? | `false` for bad tokens, bad parameters, unknown or paused templates, a closed 24-hour window; `true` for throttles and Meta-side outages. |
+
+They are deliberately separate. `132001` (template does not exist) is never
+worth retrying, but it says nothing about the recipient — marking it `permanent`
+would suppress every contact in a campaign over one typo in a template name.
+
+Codes the adapter does not recognise leave both flags `undefined`, which the
+core reads as "retry, never suppress" — the cautious default.
+
+Meta's `message` often reads `(#100) Invalid parameter`; when `error_data.details`
+carries the real reason, it is appended after a colon.
 
 ## Signature verification debugging
 

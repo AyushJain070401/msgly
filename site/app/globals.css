@@ -195,6 +195,45 @@ code, .inline-code { font-family: var(--mono); color: var(--accent); font-size: 
 .orbit-svg { width: 100%; height: auto; display: block; position: relative; overflow: visible; }
 .orbit .ring { fill: none; stroke: rgba(16, 19, 28, 0.08); }
 .orbit .ring.faint { stroke: rgba(16, 19, 28, 0.06); stroke-dasharray: 3 7; }
+/* Dashes crawling round the inner ring read as motion even where the nodes
+   happen to leave a gap. */
+.orbit .ring.drift { animation: ring-drift 9s linear infinite; }
+@keyframes ring-drift { to { stroke-dashoffset: -100; } }
+
+/* ---- the rings turn ----
+   Each ring rotates as one piece, spokes and nodes together, so a spoke never
+   drifts off the node it points at. `--turn` is set per ring in the component,
+   and `.reverse` sends the outer ring the other way — two rings drifting past
+   each other rather than one rigid disc.
+
+   transform-box is explicit because an SVG group's default box is not the one
+   you want here: rotation has to happen about the viewBox centre, not each
+   group's own bounds. */
+.orbit .ring-spin {
+  animation: orbit-turn var(--turn, 80s) linear infinite;
+  transform-box: view-box;
+  transform-origin: 220px 220px;
+  will-change: transform;
+}
+.orbit .ring-spin.reverse { animation-direction: reverse; }
+@keyframes orbit-turn { to { transform: rotate(1turn); } }
+
+/* The ring carries each node around; this turns the node back by exactly as
+   much, about its own centre, so a logo orbits without going upside down.
+   Duration and direction mirror the parent ring's — hence the shared --turn. */
+.orbit .node-upright {
+  animation: orbit-turn var(--turn, 80s) linear infinite reverse;
+  transform-box: view-box;
+}
+.orbit .node-upright.reverse { animation-direction: normal; }
+
+/* Stop the carousel so a visitor can actually look at a logo, the same way the
+   ticker pauses. Hovering anywhere in the orbit halts every layer of it. */
+.orbit:hover .ring-spin,
+.orbit:hover .node-upright,
+.orbit:hover .node,
+.orbit:hover .ring.drift,
+.orbit:hover::before { animation-play-state: paused; }
 
 /* the dash length per spoke is set inline (rings differ in radius) */
 .orbit .pulse {

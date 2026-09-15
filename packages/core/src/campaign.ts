@@ -72,6 +72,32 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   ses: { perSecond: 14, burst: 20 },
   // FCM's HTTP v1 API is generous; the per-project quota binds first.
   fcm: { perSecond: 50, burst: 100 },
+  // APNs publishes no hard rate; the practical limit is how many HTTP/2
+  // streams you keep open. Conservative here — Apple throttles with
+  // TooManyRequests rather than a documented ceiling.
+  apns: { perSecond: 50, burst: 100 },
+  // Web Push fans out across whatever push service each browser uses, so there
+  // is no single ceiling — but Firefox and Apple both throttle a burst from one
+  // VAPID key, and a 429 costs more than going slightly slower.
+  'web-push': { perSecond: 50, burst: 100 },
+  // Expo batches up to 100 notifications per request and asks senders to stay
+  // near 600/second overall; this leaves headroom for the batching to do the
+  // heavy lifting rather than the loop.
+  'expo-push': { perSecond: 50, burst: 100 },
+  // RCS goes out through Twilio's Messages API, so the account's messaging
+  // throughput binds rather than anything RCS-specific.
+  'rcs-twilio': { perSecond: 10, burst: 20 },
+  // A call occupies a line for its whole duration, so throughput is bounded by
+  // concurrent channels rather than requests per second.
+  'plivo-voice': { perSecond: 2, burst: 4 },
+  'vonage-voice': { perSecond: 2, burst: 4 },
+  'exotel-voice': { perSecond: 2, burst: 4 },
+  // Mailgun's documented default is generous; the plan's monthly volume binds
+  // first, as it does for the other transactional providers.
+  mailgun: { perSecond: 10, burst: 20 },
+  // Postmark asks senders to stay under 10 concurrent connections, which this
+  // sits comfortably inside.
+  postmark: { perSecond: 8, burst: 16 },
   // Reddit's free OAuth tier is ~100 queries/minute, and it enforces hard.
   reddit: { perSecond: 1, burst: 2 },
   // TikTok's Content Posting API is quota'd per app per day; the per-second

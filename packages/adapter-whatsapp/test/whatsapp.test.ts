@@ -202,6 +202,9 @@ describe('createWhatsAppAdapter', () => {
     expect(receipts[1]!.status).toBe('read');
     expect(receipts[2]!.status).toBe('failed');
     expect(receipts[2]!.error?.message).toBe('Receiver incapable');
+    // Same code a failed send would have produced, so one check covers both.
+    expect(receipts[2]!.error?.code).toBe('wa_131026');
+    expect(receipts[2]!.error?.permanent).toBe(true);
   });
 
   it('handles webhook GET challenge', () => {
@@ -439,6 +442,88 @@ describe('send', () => {
     expect(receipt.error?.message).toBe('Re-engagement message');
   });
 
+  it('marks a dead recipient permanent so suppression can act on it', async () => {
+    mockSend({ error: { code: 131026, message: 'Message undeliverable' } }, 400);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.error?.permanent).toBe(true);
+    expect(receipt.error?.retryable).toBe(false);
+    expect(receipt.recipientId).toBe('919999999999');
+  });
+
+  it('marks a throttle transient, so it is retried but never suppressed', async () => {
+    mockSend({ error: { code: 130429, message: 'Rate limit hit' } }, 400);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.error?.permanent).toBe(false);
+    expect(receipt.error?.retryable).toBe(true);
+  });
+
+  it('stops retrying a bad token without blaming the recipient', async () => {
+    mockSend({ error: { code: 190, message: 'Access token has expired' } }, 401);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.error?.retryable).toBe(false);
+    // A dead token says nothing about the number — suppressing here would
+    // wrongly bin every recipient in a campaign.
+    expect(receipt.error?.permanent).toBeUndefined();
+  });
+
+  it('leaves an unrecognised code unclassified rather than guessing', async () => {
+    mockSend({ error: { code: 999999, message: 'Who knows' } }, 400);
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.error?.permanent).toBeUndefined();
+    expect(receipt.error?.retryable).toBeUndefined();
+  });
+
+  it('appends error_data.details, where Meta puts the real reason', async () => {
+    mockSend(
+      {
+        error: {
+          code: 132012,
+          message: '(#132012) Parameter format does not match format in template',
+          error_data: { details: 'body: Expected 2 parameters, got 1' },
+        },
+      },
+      400,
+    );
+    const receipt = await createWhatsAppAdapter(config).send(
+      outbound({ type: 'text', text: 'hi' }),
+    );
+
+    expect(receipt.error?.message).toBe(
+      '(#132012) Parameter format does not match format in template: body: Expected 2 parameters, got 1',
+    );
+  });
+
+  it('sends a document with its filename', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send(
+      outbound({
+        type: 'file',
+        mediaRef: {
+          kind: 'url',
+          value: 'https://example.com/d/9f2c',
+          filename: 'invoice-0042.pdf',
+        },
+      }),
+    );
+
+    expect(bodyOf(calls).document).toEqual({
+      link: 'https://example.com/d/9f2c',
+      filename: 'invoice-0042.pdf',
+    });
+  });
+
   it('fails when the API returns 200 with no message id', async () => {
     // A 2xx without `messages` is not a successful send.
     mockSend({}, 200);
@@ -608,6 +693,34 @@ describe('replyTo, reactions and rich interactive types', () => {
       title: '09:00',
       description: 'with Dr. Rao',
     });
+  });
+
+  it('caps the list at 10 rows across sections and drops emptied ones', async () => {
+    const calls = mockSend();
+    await createWhatsAppAdapter(config).send({
+      ...base,
+      content: {
+        type: 'list',
+        text: 'Pick a slot',
+        buttonLabel: 'View times',
+        header: 'H'.repeat(80),
+        footer: 'F'.repeat(80),
+        sections: [
+          { title: 'Morning', rows: Array.from({ length: 8 }, (_, i) => ({ id: `m${i}`, title: `0${i}:00` })) },
+          { title: 'Afternoon', rows: Array.from({ length: 5 }, (_, i) => ({ id: `a${i}`, title: `1${i}:00` })) },
+          { title: 'Evening', rows: [{ id: 'e0', title: '19:00' }] },
+        ],
+      },
+    });
+
+    const action = bodyOf(calls).interactive.action;
+    const rows = action.sections.flatMap((sec: { rows: unknown[] }) => sec.rows);
+    expect(rows).toHaveLength(10);
+    // Third section got no budget left, so it is dropped rather than sent empty.
+    expect(action.sections).toHaveLength(2);
+    expect(action.sections[1].rows).toHaveLength(2);
+    expect(bodyOf(calls).interactive.header.text).toHaveLength(60);
+    expect(bodyOf(calls).interactive.footer.text).toHaveLength(60);
   });
 
   it('builds a cta_url message', async () => {

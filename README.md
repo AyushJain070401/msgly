@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, FCM push, Reddit, TikTok, and Twilio Voice. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, Mailgun, Postmark, FCM, APNs, Web Push and Expo push, RCS, Reddit, TikTok, and voice via Twilio, Plivo, Vonage and Exotel. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
@@ -141,6 +141,7 @@ Building a chatbot or notification system that works across multiple channels me
 | Slack           | `@msgly/slack`     | Events API + Block Kit |
 | WeChat          | `@msgly/wechat`    | Official Account; **`massSend()` to all followers or a tag** |
 | **Viber**       | `@msgly/viber`     | **Business Messages, keyboards, signed webhooks, `broadcast()`** |
+| **RCS**         | `@msgly/rcs-twilio` | **Branded rich cards and suggestion chips via Twilio, with SMS fallback** |
 | **Mattermost**  | `@msgly/mattermost` | **Self-hosted team chat, REST + outgoing webhooks** |
 | **Rocket.Chat** | `@msgly/rocketchat` | **Self-hosted team chat, REST + outgoing webhooks** |
 | **Google Chat** | `@msgly/googlechat` | **Service-account auth, Google-signed webhook verification** |
@@ -153,6 +154,8 @@ Building a chatbot or notification system that works across multiple channels me
 | Outlook / M365 | `@msgly/outlook` | Graph notifications, attachments |
 | **SMTP / IMAP** | `@msgly/smtp`   | **Yahoo, Zoho, Fastmail, iCloud, AOL, or any custom mail server.** Node-only |
 | **Resend**     | `@msgly/resend`  | **Transactional email over HTTP, Edge-compatible** |
+| **Mailgun** | `@msgly/mailgun` | **Transactional email, inbound routes, signed event webhooks** |
+| **Postmark** | `@msgly/postmark` | **Transactional email, message streams, bounce webhooks** |
 | **SendGrid**   | `@msgly/sendgrid` | **Inbound Parse + ECDSA-signed event webhook, Edge-compatible** |
 | **Amazon SES** | `@msgly/ses`     | **High-volume campaign email, SigV4 + SNS bounce handling** |
 
@@ -167,6 +170,9 @@ Building a chatbot or notification system that works across multiple channels me
 | **Plivo**    | `@msgly/plivo`        | **Global SMS + MMS, V3 signature verification** |
 | **Telnyx**   | `@msgly/telnyx`       | **Global SMS + MMS, Ed25519-signed webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
+| **Plivo Voice** | `@msgly/plivo-voice` | **IVR and outbound calls, sharing the Plivo SMS credentials** |
+| **Vonage Voice** | `@msgly/vonage-voice` | **NCCO-driven IVR and outbound calls** |
+| **Exotel Voice** | `@msgly/exotel-voice` | **India click-to-call and App Bazaar flow dialling** |
 
 ### Publishing
 
@@ -180,6 +186,9 @@ Building a chatbot or notification system that works across multiple channels me
 | Channel | Package | Notes |
 | ------- | ------- | ----- |
 | **FCM** | `@msgly/fcm` | **Push for Android, iOS and web; topic broadcast** |
+| **APNs** | `@msgly/apns` | **Apple push direct — iOS, macOS, Safari; no Firebase dependency** |
+| **Web Push** | `@msgly/web-push` | **Browser push over VAPID, encrypted per subscription** |
+| **Expo Push** | `@msgly/expo-push` | **React Native push via Expo; tickets, receipts and batching** |
 
 ### Core
 
@@ -1245,6 +1254,14 @@ pnpm install
 pnpm build
 pnpm test
 ```
+
+### Adapter audit
+
+[`docs/audit/`](docs/audit/README.md) holds an inbound/outbound review of every
+adapter against one checklist — error classification, retry behaviour,
+suppression signals, webhook verification, what each channel silently drops —
+with a file per channel and the cross-cutting findings up front. Worth reading
+before touching an adapter's send or webhook path.
 
 ## License
 

@@ -1,6 +1,6 @@
 {
   "name": "@msgly/plivo-voice",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Plivo Voice adapter for Msgly",
   "license": "MIT",
   "type": "module",

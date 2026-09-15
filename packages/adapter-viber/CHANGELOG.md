@@ -1,5 +1,16 @@
 # @msgly/viber
 
+## 1.8.0
+
+### Patch Changes
+
+- Updated dependencies [79a2749]
+- Updated dependencies [79a2749]
+- Updated dependencies [79a2749]
+- Updated dependencies [79a2749]
+- Updated dependencies [79a2749]
+  - @msgly/core@1.8.0
+
 ## 1.7.0
 
 ### Patch Changes

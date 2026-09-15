@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packagesDir = join(here, '..', '..', 'packages');
+const changesetDir = join(here, '..', '..', '.changeset');
 const outFile = join(here, '..', 'app', 'changelog.json');
 
 /** changesets writes this for packages that only moved because a dep moved. */
@@ -83,6 +84,71 @@ function headline(body) {
   return text.replace(/`/g, '').replace(/\*\*/g, '');
 }
 
+/**
+ * Changesets that are merged but not yet released.
+ *
+ * A changeset only becomes a CHANGELOG entry when the release PR runs
+ * `changeset version`, so without this the site shows nothing about work that
+ * is already on `main` — the gap between "merged" and "published" is exactly
+ * when people come looking. These are marked `pending` and carry no date, and
+ * the version is the one changesets *will* pick: packages move as a fixed
+ * group, so the largest bump among pending changesets applies to all of them.
+ */
+function pendingRelease() {
+  let files;
+  try {
+    files = readdirSync(changesetDir).filter((f) => f.endsWith('.md') && f !== 'README.md');
+  } catch {
+    return null; // no .changeset dir (a published tarball, say)
+  }
+  if (files.length === 0) return null;
+
+  const RANK = { patch: 0, minor: 1, major: 2 };
+  const notes = [];
+  const packages = new Set();
+  let bump = 'patch';
+
+  for (const file of files) {
+    const raw = readFileSync(join(changesetDir, file), 'utf8');
+    // Frontmatter is "---\n'@msgly/x': minor\n---\n" then the body.
+    const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
+    if (!m) continue;
+
+    const entryPackages = [];
+    for (const line of m[1].split('\n')) {
+      const pkg = /^\s*['"]?(@[^'":]+|[^'":\s]+)['"]?\s*:\s*(patch|minor|major)\s*$/.exec(line);
+      if (!pkg) continue;
+      entryPackages.push(pkg[1]);
+      packages.add(pkg[1]);
+      if (RANK[pkg[2]] > RANK[bump]) bump = pkg[2];
+    }
+
+    const body = m[2].trim();
+    if (!body || entryPackages.length === 0) continue;
+    notes.push({
+      kind: bump[0].toUpperCase() + bump.slice(1),
+      headline: headline(body),
+      body,
+      packages: entryPackages.sort(),
+    });
+  }
+  if (notes.length === 0) return null;
+
+  // Every package shares one version, so core's is the whole library's.
+  const current = JSON.parse(
+    readFileSync(join(packagesDir, 'core', 'package.json'), 'utf8'),
+  ).version;
+  const [major, minor, patch] = current.split('.').map(Number);
+  const next =
+    bump === 'major'
+      ? `${major + 1}.0.0`
+      : bump === 'minor'
+        ? `${major}.${minor + 1}.0`
+        : `${major}.${minor}.${patch + 1}`;
+
+  return { version: next, date: null, pending: true, packageCount: packages.size, notes };
+}
+
 const dates = tagDates();
 const releases = new Map();
 
@@ -124,11 +190,19 @@ const data = [...releases.values()]
   .map((r) => ({
     version: r.version,
     date: r.date,
+    pending: false,
     packageCount: r.packages.size,
     notes: r.notes.map((n) => ({ ...n, packages: n.packages.sort() })),
   }))
   // A release whose every note was dependency noise has nothing to show.
   .filter((r) => r.notes.length > 0);
 
+const pending = pendingRelease();
+// A pending version that somehow already shipped means the changeset was left
+// behind after a release; the published entry is the truthful one.
+if (pending && !data.some((r) => r.version === pending.version)) data.unshift(pending);
+
 writeFileSync(outFile, JSON.stringify(data, null, 2) + '\n');
-console.log(`changelog: ${data.length} releases → app/changelog.json`);
+console.log(
+  `changelog: ${data.length} releases${pending ? ` (incl. pending v${pending.version})` : ''} → app/changelog.json`,
+);

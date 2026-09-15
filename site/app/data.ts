@@ -25,6 +25,8 @@ export const channels: Channel[] = [
   { name: 'Outlook / M365', pkg: '@msgly/outlook', category: 'Email', notes: 'Graph change notifications and attachment handling', campaign: '—' },
   { name: 'SMTP / IMAP', pkg: '@msgly/smtp', category: 'Email', notes: 'Yahoo, Zoho, Fastmail or any custom mail server', campaign: 'Outbound' },
   { name: 'Resend', pkg: '@msgly/resend', category: 'Email', notes: 'Transactional email over HTTP, Edge-compatible', campaign: 'Outbound' },
+  { name: 'Mailgun', pkg: '@msgly/mailgun', category: 'Email', notes: 'Transactional email, inbound routes and signed event webhooks', campaign: 'Outbound' },
+  { name: 'Postmark', pkg: '@msgly/postmark', category: 'Email', notes: 'Transactional email with message streams and bounce webhooks', campaign: 'Outbound' },
   { name: 'SendGrid', pkg: '@msgly/sendgrid', category: 'Email', notes: 'Inbound Parse and ECDSA-signed event webhooks', campaign: 'Outbound' },
   { name: 'Amazon SES', pkg: '@msgly/ses', category: 'Email', notes: 'High-volume email, SigV4 with SNS bounce handling', campaign: 'Outbound' },
 
@@ -40,6 +42,13 @@ export const channels: Channel[] = [
   { name: 'TikTok', pkg: '@msgly/tiktok', category: 'Publishing', notes: 'Video and photo publishing, comment replies and DMs', campaign: 'Broadcast' },
 
   { name: 'FCM', pkg: '@msgly/fcm', category: 'Push', notes: 'Push to Android, iOS and web, plus topic broadcast', campaign: 'Outbound' },
+  { name: 'APNs', pkg: '@msgly/apns', category: 'Push', notes: 'Apple push direct — iOS, macOS and Safari, no Firebase in the path', campaign: 'Outbound' },
+  { name: 'Web Push', pkg: '@msgly/web-push', category: 'Push', notes: 'Browser notifications over VAPID, encrypted per subscription', campaign: 'Outbound' },
+  { name: 'Expo Push', pkg: '@msgly/expo-push', category: 'Push', notes: 'React Native push via Expo, with ticket and receipt tracking', campaign: 'Outbound' },
+  { name: 'RCS', pkg: '@msgly/rcs-twilio', category: 'Chat & social', notes: 'Branded rich cards and suggestion chips via Twilio, with SMS fallback', campaign: 'Policy-gated' },
+  { name: 'Plivo Voice', pkg: '@msgly/plivo-voice', category: 'SMS & voice', notes: 'IVR and outbound calls, sharing the Plivo SMS credentials', campaign: 'Not for campaigns' },
+  { name: 'Vonage Voice', pkg: '@msgly/vonage-voice', category: 'SMS & voice', notes: 'NCCO-driven IVR and outbound calls', campaign: 'Not for campaigns' },
+  { name: 'Exotel Voice', pkg: '@msgly/exotel-voice', category: 'SMS & voice', notes: 'India click-to-call and App Bazaar flow dialling', campaign: 'Not for campaigns' },
 
   { name: 'Core', pkg: '@msgly/core', category: 'Core', notes: 'Hub, adapter contract, retries, storage, campaigns', campaign: '—' },
 ];

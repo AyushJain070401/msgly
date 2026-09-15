@@ -177,6 +177,20 @@ export const customMarks: Record<string, { hex: string; node: ReactElement }> = 
     ),
   },
 
+  // Postmark's own logo is a wordmark simple-icons does not ship. A franked
+  // envelope in their yellow reads as "posted mail" without pretending to be
+  // their trademark.
+  '@msgly/postmark': {
+    hex: '#FFDE00',
+    node: (
+      <g>
+        <rect x="1.5" y="4.5" width="21" height="15" rx="2.6" fill="#1A1A1A" />
+        <path fill="none" stroke="#FFDE00" strokeWidth="1.6" strokeLinejoin="round" d="m3.8 7.4 8.2 5.8 8.2-5.8" />
+        <rect x="15.6" y="5.8" width="5.4" height="4.2" rx="0.8" fill="#FFDE00" />
+      </g>
+    ),
+  },
+
   '@msgly/core': {
     hex: '#1F6FEB',
     node: (

@@ -202,12 +202,23 @@ function generateId(): string {
 
 /**
  * Heuristic: which adapter errors should we retry?
- * Auth errors (unauthorized / forbidden) are never retryable — the token
- * is bad, retrying just wastes API calls. Network errors and 5xx are retryable.
+ *
+ * An adapter that classifies its own failures wins — it knows its platform's
+ * error codes, and `retryable: false` means a retry provably cannot succeed.
+ * A recipient-fatal failure (`permanent`) is equally pointless to repeat.
+ *
+ * Only when the adapter says nothing do we fall back to sniffing the code for
+ * an HTTP status. That fallback is weak by nature: platforms that report their
+ * own application error codes (WhatsApp's `wa_131026`, Twilio's `twilio_21211`)
+ * carry no status to match, which is exactly why adapters should classify.
+ * Network errors and 5xx are retryable.
  */
 function isRetryableError(err: unknown): boolean {
   if (err instanceof Error && err.name === 'FailedReceipt') {
-    const code = (err as Error & { receipt?: DeliveryReceipt }).receipt?.error?.code ?? '';
+    const error = (err as Error & { receipt?: DeliveryReceipt }).receipt?.error;
+    if (error?.retryable !== undefined) return error.retryable;
+    if (error?.permanent === true) return false;
+    const code = error?.code ?? '';
     if (/_(401|403|400|404)\b/.test(code)) return false;
     if (code.includes('unauthorized')) return false;
     return true;
@@ -265,6 +276,7 @@ export function createHub(options: HubOptions = {}): Hub {
       interactive: c.interactive.buttons,
       list: c.interactive.lists ?? false,
       cta_url: c.interactive.ctaUrl ?? false,
+      card: c.interactive.cards ?? false,
       template: c.templates,
     };
     if (!supported[contentType]) {

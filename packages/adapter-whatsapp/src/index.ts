@@ -564,6 +564,96 @@ function mapStatus(status: string): DeliveryStatus | null {
   }
 }
 
+/**
+ * Meta codes where the *recipient* is the problem — the number is not on
+ * WhatsApp, or cannot be messaged at all. Safe for a suppression store to act
+ * on. Deliberately tiny: wrongly suppressing a reachable customer is far worse
+ * than retrying a dead number, so anything ambiguous stays off this list.
+ */
+const RECIPIENT_FATAL_CODES = new Set([
+  131021, // Recipient cannot be sender (messaging your own number)
+  131026, // Message undeliverable — not a WhatsApp user, or cannot receive
+]);
+
+/**
+ * Codes a retry can plausibly fix: throttles, upstream hiccups, maintenance.
+ */
+const TRANSIENT_CODES = new Set([
+  1, // API unknown — transient server-side fault
+  2, // API service temporarily unavailable
+  4, // API too many calls
+  80007, // Rate limit
+  130429, // Cloud API message throughput limit hit
+  131000, // Generic "something went wrong" on Meta's side
+  131016, // Service unavailable
+  131048, // Spam rate limit hit
+  131056, // (Business, recipient) pair rate limit hit
+]);
+
+/**
+ * Codes a retry will never fix: bad credentials, malformed requests, unknown
+ * or paused templates, a closed 24-hour window. Retrying these burns the retry
+ * budget and the API quota to arrive at the same failure.
+ */
+const FATAL_CODES = new Set([
+  0, // Cannot parse access token
+  3, // Method/permission not allowed for this app
+  10, // Permission denied
+  33, // Object does not exist, or the token cannot see it
+  100, // Invalid parameter
+  190, // Access token expired, revoked, or invalid
+  131005, // Access denied
+  131008, // Required parameter missing
+  131009, // Parameter value not valid
+  131031, // Business account locked or restricted
+  131042, // Business eligibility / payment issue
+  131045, // Number not registered (incorrect certificate)
+  131047, // Re-engagement required — 24h window closed, send a template
+  131051, // Unsupported message type
+  131052, // Media download error (the link Meta was given is bad)
+  131053, // Media upload error
+  132000, // Template parameter count mismatch
+  132001, // Template does not exist in this language
+  132005, // Hydrated template text too long
+  132007, // Template format character policy violated
+  132012, // Template parameter format mismatch
+  132015, // Template is paused
+  132016, // Template is disabled
+  133010, // Phone number not registered
+  135000, // Generic user error — the request itself is wrong
+]);
+
+/**
+ * Split a Meta error code into the two questions the core actually asks:
+ * should we retry, and should we suppress this recipient.
+ *
+ * WhatsApp answers almost everything with HTTP 400 and puts the real cause in
+ * `error.code`, so the status line alone cannot tell a dead number (131026)
+ * from a throttle (130429). Unknown codes stay `undefined` and inherit the
+ * cautious default: retry, never suppress.
+ */
+function classifyError(code: number | undefined): {
+  permanent?: boolean;
+  retryable?: boolean;
+} {
+  if (code === undefined) return {};
+  if (RECIPIENT_FATAL_CODES.has(code)) return { permanent: true, retryable: false };
+  if (TRANSIENT_CODES.has(code)) return { permanent: false, retryable: true };
+  // 200-299 is Meta's permission-error block.
+  if (FATAL_CODES.has(code) || (code >= 200 && code <= 299)) return { retryable: false };
+  return {};
+}
+
+/**
+ * Meta's `error.message` is often just `(#100) Invalid parameter`. The sentence
+ * that says what is actually wrong lives in `error_data.details`, so keep both.
+ */
+function errorMessage(error: WhatsAppApiError | undefined, fallback: string): string {
+  const base = error?.message ?? fallback;
+  const details = error?.error_data?.details;
+  return details && details !== base ? `${base}: ${details}` : base;
+}
+
 function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
   switch (content.type) {
     case 'text':
@@ -596,6 +686,11 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
         type: 'document',
         document: {
           ...docPayload,
+          // Without this WhatsApp names the file after the URL it fetched, or
+          // shows nothing at all for an uploaded id.
+          ...(content.mediaRef.filename
+            ? { filename: content.mediaRef.filename }
+            : {}),
           ...(content.caption ? { caption: content.caption } : {}),
         },
       };
@@ -632,33 +727,47 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
       };
     }
 
-    case 'list':
+    case 'list': {
+      // WhatsApp allows at most 10 rows across *all* sections, so fill sections
+      // in order until the budget runs out and drop the ones left empty.
+      let budget = 10;
+      const sections = content.sections
+        .slice(0, 10)
+        .map((sec) => {
+          const rows = sec.rows.slice(0, budget);
+          budget -= rows.length;
+          return {
+            ...(sec.title ? { title: sec.title.slice(0, 24) } : {}),
+            rows: rows.map((r) => ({
+              id: r.id,
+              title: r.title.slice(0, 24),
+              ...(r.description
+                ? { description: r.description.slice(0, 72) }
+                : {}),
+            })),
+          };
+        })
+        .filter((sec) => sec.rows.length > 0);
+
       return {
         type: 'interactive',
         interactive: {
           type: 'list',
           ...(content.header
-            ? { header: { type: 'text', text: content.header } }
+            ? { header: { type: 'text', text: content.header.slice(0, 60) } }
             : {}),
           body: { text: content.text },
-          ...(content.footer ? { footer: { text: content.footer } } : {}),
+          ...(content.footer
+            ? { footer: { text: content.footer.slice(0, 60) } }
+            : {}),
           action: {
-            // WhatsApp caps the button label at 20 chars and allows at most
-            // 10 rows in total across all sections.
+            // WhatsApp caps the button label at 20 chars.
             button: content.buttonLabel.slice(0, 20),
-            sections: content.sections.map((sec) => ({
-              ...(sec.title ? { title: sec.title.slice(0, 24) } : {}),
-              rows: sec.rows.map((r) => ({
-                id: r.id,
-                title: r.title.slice(0, 24),
-                ...(r.description
-                  ? { description: r.description.slice(0, 72) }
-                  : {}),
-              })),
-            })),
+            sections,
           },
         },
       };
+    }
 
     case 'cta_url':
       return {
@@ -666,10 +775,12 @@ function toWhatsAppMessage(content: MessageContent): Record<string, unknown> {
         interactive: {
           type: 'cta_url',
           ...(content.header
-            ? { header: { type: 'text', text: content.header } }
+            ? { header: { type: 'text', text: content.header.slice(0, 60) } }
             : {}),
           body: { text: content.text },
-          ...(content.footer ? { footer: { text: content.footer } } : {}),
+          ...(content.footer
+            ? { footer: { text: content.footer.slice(0, 60) } }
+            : {}),
           action: {
             name: 'cta_url',
             parameters: {
@@ -758,6 +869,7 @@ function parseContent(m: WhatsAppInboundMessage): MessageContent | null {
               kind: 'platform-id',
               value: m.document.id,
               mimeType: m.document.mime_type,
+              ...(m.document.filename ? { filename: m.document.filename } : {}),
             },
             ...(m.document.caption ? { caption: m.document.caption } : {}),
           }
@@ -877,7 +989,7 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
 
     const data = (await res.json().catch(() => ({}))) as {
       messages?: Array<{ id: string }>;
-      error?: { message?: string; code?: number };
+      error?: WhatsAppApiError;
     };
 
     if (res.status >= 200 && res.status < 300 && data.messages?.[0]) {
@@ -886,16 +998,21 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
         externalId: data.messages[0].id,
         status: 'sent',
         timestamp: new Date().toISOString(),
+        recipientId: message.contact.channelUserId,
       };
     }
 
+    // `error.code` is Meta's application code (131026, 190, ...), not the HTTP
+    // status — that is almost always 400 and says nothing useful.
     return {
       messageId: message.id,
       status: 'failed',
       timestamp: new Date().toISOString(),
+      recipientId: message.contact.channelUserId,
       error: {
         code: `wa_${data.error?.code ?? res.status}`,
-        message: data.error?.message ?? 'unknown',
+        message: errorMessage(data.error, `HTTP ${res.status}`),
+        ...classifyError(data.error?.code),
       },
     };
   }
@@ -981,8 +1098,14 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
             ...(s.errors?.[0]
               ? {
                   error: {
-                    code: String(s.errors[0].code),
-                    message: s.errors[0].title ?? 'unknown',
+                    // Same namespace as a failure reported on the send call, so
+                    // one `code` check covers both paths.
+                    code: `wa_${s.errors[0].code}`,
+                    message: errorMessage(
+                      s.errors[0],
+                      s.errors[0].title ?? 'unknown',
+                    ),
+                    ...classifyError(s.errors[0].code),
                   },
                 }
               : {}),
@@ -1131,7 +1254,13 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
       );
     }
 
-    return { kind: 'platform-id', value: data.id, mimeType: file.mimeType };
+    return {
+      kind: 'platform-id',
+      value: data.id,
+      mimeType: file.mimeType,
+      // Carried so a document sent with this ref keeps its real name.
+      ...(file.filename ? { filename: file.filename } : {}),
+    };
   }
 
   async function downloadMedia(ref: MediaReference): Promise<MediaFile> {
@@ -1160,6 +1289,7 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     return {
       data,
       mimeType: lookupData.mime_type ?? ref.mimeType ?? 'application/octet-stream',
+      ...(ref.filename ? { filename: ref.filename } : {}),
     };
   }
 
@@ -1881,7 +2011,7 @@ interface WhatsAppWebhookBody {
           status: string;
           timestamp: string;
           recipient_id?: string;
-          errors?: Array<{ code: number; title?: string }>;
+          errors?: Array<WhatsAppApiError & { code: number; title?: string }>;
         }>;
       };
     }>;
@@ -1900,6 +2030,14 @@ interface WhatsAppStateSyncEntry {
   metadata?: { timestamp?: string };
 }
 
+/** Error envelope the Graph API returns on both send responses and webhooks. */
+interface WhatsAppApiError {
+  message?: string;
+  code?: number;
+  error_subcode?: number;
+  error_data?: { details?: string };
+}
+
 interface WhatsAppInboundMessage {
   id: string;
   from: string;
@@ -1913,7 +2051,7 @@ interface WhatsAppInboundMessage {
   image?: { id: string; mime_type?: string; caption?: string };
   video?: { id: string; mime_type?: string; caption?: string };
   audio?: { id: string; mime_type?: string };
-  document?: { id: string; mime_type?: string; caption?: string };
+  document?: { id: string; mime_type?: string; caption?: string; filename?: string };
   sticker?: { id: string; mime_type?: string; animated?: boolean };
   location?: {
     latitude: number;

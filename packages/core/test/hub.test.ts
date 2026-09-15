@@ -219,6 +219,114 @@ describe('createHub', () => {
     expect(calls).toBe(2);
   });
 
+  it('honours an adapter that says a failure is not retryable', async () => {
+    let calls = 0;
+    const hub = createHub({
+      retry: { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 2 },
+    });
+    hub.register(
+      createFakeAdapter({
+        send: vi.fn(async (msg: OutboundMessage) => {
+          calls++;
+          return {
+            messageId: msg.id,
+            status: 'failed' as const,
+            timestamp: new Date().toISOString(),
+            // A platform application code carries no HTTP status to sniff —
+            // the adapter's own verdict is the only signal there is.
+            error: {
+              code: 'wa_132001',
+              message: 'Template does not exist',
+              retryable: false,
+            },
+          };
+        }),
+      }),
+    );
+
+    await expect(
+      hub.send({
+        channel: 'telegram',
+        account: { channel: 'telegram', channelAccountId: 'self' },
+        contact: { channel: 'telegram', channelUserId: '1' },
+        content: { type: 'text', text: 'hi' },
+      }),
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'SendFailed'));
+    expect(calls).toBe(1);
+  });
+
+  it('does not retry a recipient-fatal failure', async () => {
+    let calls = 0;
+    const hub = createHub({
+      retry: { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 2 },
+    });
+    hub.register(
+      createFakeAdapter({
+        send: vi.fn(async (msg: OutboundMessage) => {
+          calls++;
+          return {
+            messageId: msg.id,
+            status: 'failed' as const,
+            timestamp: new Date().toISOString(),
+            error: {
+              code: 'wa_131026',
+              message: 'Message undeliverable',
+              permanent: true,
+            },
+          };
+        }),
+      }),
+    );
+
+    await expect(
+      hub.send({
+        channel: 'telegram',
+        account: { channel: 'telegram', channelAccountId: 'self' },
+        contact: { channel: 'telegram', channelUserId: '1' },
+        content: { type: 'text', text: 'hi' },
+      }),
+    ).rejects.toSatisfy((err) => isMsglyError(err, 'SendFailed'));
+    expect(calls).toBe(1);
+  });
+
+  it('still retries when the adapter explicitly says the failure is transient', async () => {
+    let calls = 0;
+    const hub = createHub({
+      retry: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 2 },
+    });
+    hub.register(
+      createFakeAdapter({
+        send: vi.fn(async (msg: OutboundMessage) => {
+          calls++;
+          if (calls < 2) {
+            return {
+              messageId: msg.id,
+              status: 'failed' as const,
+              timestamp: new Date().toISOString(),
+              // A 400-shaped code that the old regex would have given up on.
+              error: { code: 'wa_400', message: 'throttled', retryable: true },
+            };
+          }
+          return {
+            messageId: msg.id,
+            externalId: 'ext-ok',
+            status: 'sent' as const,
+            timestamp: new Date().toISOString(),
+          };
+        }),
+      }),
+    );
+
+    const receipt = await hub.send({
+      channel: 'telegram',
+      account: { channel: 'telegram', channelAccountId: 'self' },
+      contact: { channel: 'telegram', channelUserId: '1' },
+      content: { type: 'text', text: 'hi' },
+    });
+    expect(receipt.status).toBe('sent');
+    expect(calls).toBe(2);
+  });
+
   it('does NOT retry on auth-style errors (401/403)', async () => {
     let calls = 0;
     const hub = createHub({

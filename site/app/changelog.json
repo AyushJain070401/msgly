@@ -1,7 +1,118 @@
 [
   {
+    "version": "1.8.0",
+    "date": null,
+    "pending": true,
+    "packageCount": 11,
+    "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Add Mailgun, Postmark and Exotel Voice.",
+        "body": "Add Mailgun, Postmark and Exotel Voice.\n\n**`@msgly/mailgun`** covers sending, inbound routes and signed event webhooks.\nMailgun already draws the distinction email actually needs, in its `severity`\nfield: a `permanent` failure is a dead mailbox, a `temporary` one is a full\ninbox or a greylist. That maps straight onto core's `permanent`, so bounces\nsuppress and deferrals do not.\n\nTwo details that cost people an hour each are handled explicitly. Mailgun keeps\nEU-region domains on a different host, and pointing at the wrong one returns a\n404 that reads exactly like a missing domain — `region: 'eu'` switches it, and\n`verifyCredentials` names the possibility when a lookup 404s. And the webhook\nsigning key is a *different* value from the API key; using one for the other\nproduces a verification that silently never matches.\n\nInbound attachments stay lazy: the message carries Mailgun's storage URL and the\nbytes are only fetched when `downloadMedia` is called, which keeps a mailbox full\nof large attachments from becoming a memory problem. Inline images go on\nMailgun's `inline` field rather than `attachment`, which is what makes `cid:`\nreferences resolve in an HTML body.\n\n**`@msgly/postmark`** covers sending, inbound parsing and bounce webhooks.\n\nPostmark answers **HTTP 200 with a non-zero `ErrorCode`** on failure, so the\nadapter reads the code rather than trusting the status line. `406` is the one\nworth knowing: Postmark already has that address suppressed from an earlier hard\nbounce and refused to send — reported as recipient-fatal, so your list agrees\nwith theirs instead of retrying forever. Message streams are first-class,\nbecause Postmark refuses a send on the wrong one and campaigns down the\ntransactional stream get accounts reviewed.\n\nPostmark does not sign webhooks at all, so a URL token is the only guard short\nof IP allow-listing. With none configured `verifySignature` rejects rather than\naccepting whatever arrives: an unverified bounce webhook is a way for anyone to\nget your recipients suppressed.\n\n**`@msgly/exotel-voice`** is deliberately narrower than the other three voice\nadapters, because the platform is.\n\nTwilio, Plivo and Vonage all let you return TwiML, Plivo XML or an NCCO from a\nwebhook and have the caller hear it. Exotel does not — what a caller hears comes\nfrom an App Bazaar flow built in the dashboard, and the API places and bridges\ncalls into it. So this adapter declares `text: false` and no media, rather than\nclaiming a capability `send()` could never honour. What it does offer is what\nExotel is genuinely good at: `connectNumbers()` for click-to-call (the Indian\nmarketplace pattern of connecting two people without either seeing the other's\nnumber), `connectToFlow()` for IVR dialling, inbound Gather webhooks, and\n`parseStatuses()` for outcomes. `send()` maps to flow dialling, and without a\nflow id it fails with a message pointing at `connectNumbers()` rather than\nfailing vaguely.\n\nAcross all three voice adapters the permanence rule is the same: only a genuinely\nfailed call marks the number recipient-fatal. Busy and no-answer are the person,\nnot the line.\n\n`@msgly/core` registers `mailgun`, `postmark` and `exotel-voice` in\n`KnownChannel` and the per-channel rate-limit table.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/exotel-voice",
+          "@msgly/mailgun",
+          "@msgly/postmark"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add Expo push and RCS Business Messaging, and a card content type in core.",
+        "body": "Add Expo push and RCS Business Messaging, and a `card` content type in core.\n\n**`@msgly/expo-push`** covers React Native apps shipped through EAS, where Expo\nholds the platform credentials so you never touch a `.p8` file or a service\naccount.\n\nThe part Expo integrations usually get wrong is that a send returns a *ticket*,\nnot a delivery — and a completely dead token still comes back `status: ok`. So\nthe receipt says `queued` rather than `sent`, and `getReceipts()` is what\nactually tells you what happened. `DeviceNotRegistered` only ever appears in a\nreceipt, never in a ticket, which means skipping that call leaves a token list\nthat never cleans itself. `sendMulticast()` batches up to 100 per request and\nmaps tickets back to tokens positionally, failing explicitly rather than\nshifting every result onto the wrong token if Expo returns a short array.\n\n**`@msgly/rcs-twilio`** sends the branded, verified rich messaging Google\nMessages renders — cards, images and suggestion chips — with automatic SMS\nfallback.\n\nRCS is not SMS, however often the two get conflated: SMS has no markup and no\nbuttons, and there is nowhere to put one. What it shares with SMS here is\nTwilio's `/Messages.json` endpoint. The sender is chosen by\n`MessagingServiceSid` rather than a from-number, which is how Twilio decides\nper-recipient whether the handset can take RCS and falls back through the rest\nof the pool when it cannot.\n\nTwilio needs a `ContentSid` for anything richer than plain text, and unlike\nWhatsApp's, RCS content templates need no approval — so the adapter creates one\non demand and caches it by a hash of the rendered template. The same card sent a\nthousand times creates one template. `autoCreateTemplates: false` hands that\nback to you via `metadata.contentSid`. Plain text never creates a template at\nall.\n\nEvery rich type ships a `twilio/text` alongside it, because that is what a\nfallback to SMS actually delivers — without it the fallback arrives blank. For a\n`cta_url` the fallback keeps the URL in the body, since an SMS has no button to\nhang it on.\n\n`21610` — the recipient replied STOP — is marked recipient-fatal so a\nsuppression store acts on it. That one is not merely a delivery optimisation. A\nwrong Messaging Service SID is equally unretryable but suppresses nobody, since\nit says nothing about the person on the other end. Send failures and status\ncallbacks share one `rcs_twilio_<code>` namespace, so a single check covers both\npaths, and `parseStatuses` surfaces the `delivered` and `read` states RCS has\nand SMS does not.\n\nUnverifiable webhooks are refused unless `allowUnsignedWebhooks` is set, matching\nthe change `@msgly/twilio-voice` made in this release.\n\n**`@msgly/core`** gains `CardContent` — media, title, body and a mix of reply,\nURL and dial actions in one message. That is the shape branded business\nmessaging actually sends, and nothing in the existing union expressed it:\n`CtaUrlContent` covers text plus one link, but its header is text-only, so there\nwas no way to say \"the picture is the point\". Adapters opt in with\n`capabilities.interactive.cards`, and the hub throws `UnsupportedFeature`\nelsewhere rather than silently flattening a card into a paragraph.\n\nAlso registers `expo-push` and `rcs-twilio` in `KnownChannel` and the\nper-channel rate-limit table.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/expo-push",
+          "@msgly/rcs-twilio"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add two push channels, so push is a complete story rather than one provider.",
+        "body": "Add two push channels, so push is a complete story rather than one provider.\n\n**`@msgly/apns`** talks to Apple directly. Until now the only way to reach an\niPhone through this library was FCM, which means running every iOS notification\nthrough Firebase — an extra vendor, an extra account, and an extra place for a\ntoken to go stale.\n\nAuth is a provider token: an ES256 JWT signed with a `.p8` key. Apple accepts\none for an hour but refuses regeneration more than once every twenty minutes, so\nthe token is cached with both bounds in mind rather than minted per send.\n\nThe awkward part is transport. APNs speaks HTTP/2 only and `fetch` cannot —\nNode's fetch is undici over HTTP/1.1, which throws when handed APNs' binary\nframes. Every other adapter here is pure `fetch` and runs anywhere; this one\ndefaults to a transport built on `node:http2`, with `config.transport` as the\nseam for other runtimes. The test suite uses that same seam, so no test opens a\nreal connection.\n\nDead tokens are separated from bad requests, because they call for different\nhandling: `Unregistered`, `BadDeviceToken` and `DeviceTokenNotForTopic` are\nrecipient-fatal and suppress; `ExpiredProviderToken` and `PayloadTooLarge` are\npermanently unretryable and suppress nobody — marking those `permanent` would\nbin every device touched while a key was stale. `Unregistered` carries Apple's\ntimestamp saying when the token died, which the error message now includes: if\nthe device registered a newer token after that moment, the new one is still good.\n\nMessage ids are UUIDs, which is the format `apns-id` wants, so the adapter sends\nthe message id as `apns-id` and a retried send is the same notification rather\nthan a second one on someone's lock screen.\n\n`sendRaw()` covers what the content model does not — silent background\nrefreshes, VoIP, Live Activities, critical alerts — with full control of the\nheaders.\n\n**`@msgly/web-push`** is browser notifications with no vendor at all: VAPID for\nidentity, `aes128gcm` for payloads, straight to whatever push service the\nbrowser uses.\n\nPayloads are encrypted end-to-end for a single subscription, so the push service\nrelays bytes it cannot read. There is no plaintext mode in the spec and none\nhere. The implementation is verified rather than assumed: the test suite\ndecrypts its own output with the subscription's private key and asserts the\nplaintext, which is the only way to know a `aes128gcm` implementation is right\ninstead of merely well-shaped.\n\nA subscription is passed as `contact.channelUserId` — the browser's\n`PushSubscription` JSON, endpoint and keys together, so it survives `sendBulk`\nas one opaque value. Passing the endpoint with the keys in `metadata` also\nworks.\n\n`404` and `410` mean the subscription is gone and suppress; a rejected VAPID\ntoken or an oversized payload is unretryable but says nothing about the\nsubscriber. On a `429` the service's `Retry-After` is appended to the error\nmessage, since a receipt has nowhere better to carry it.\n\nBoth channels are one-way. `handleWebhook` returns nothing and\n`capabilities.interactive.buttons` is `false` on both — a Web Push notification's\naction buttons reach your service worker, not your server, and saying otherwise\nwould be the kind of capability claim that fails at runtime.\n\n`@msgly/core` gains `apns` and `web-push` in `KnownChannel` and in the\nper-channel rate-limit table.",
+        "packages": [
+          "@msgly/apns",
+          "@msgly/core",
+          "@msgly/web-push"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add Plivo Voice and Vonage Voice, taking voice from one provider to three.",
+        "body": "Add Plivo Voice and Vonage Voice, taking voice from one provider to three.\n\nBoth follow the request/response model `@msgly/twilio-voice` was rewritten to\nuse in this release, because a phone call genuinely is request/response: the\nprovider holds the HTTP request open and speaks whatever comes back. That reply\ncannot come from the hub's `on('message')` handler, which runs *after* the\nresponse has already been sent. So both take a `respond(message)` hook that\nproduces the answer inside the webhook request, with no shared state — and both\nare deliberately synchronous, since an `await` there is dead air on the line.\n\n**`@msgly/plivo-voice`** speaks Plivo XML and reuses the Auth ID and Token from\n`@msgly/plivo`, so one set of credentials covers SMS and voice. Text is\nXML-escaped, which matters more than it sounds: an ampersand in a customer's\nname would otherwise break the whole document. Plivo redirects a live call to a\nURL rather than accepting XML inline, so `send()` needs `metadata.transferUrl`\nand says so in the error rather than failing vaguely.\n\nWebhook verification uses Plivo's V3 scheme and accepts the several\ncomma-separated signatures sent during key rotation. Without a `webhookUrl`\nthere is nothing to verify, so it rejects rather than accepting blindly —\n`allowUnsignedWebhooks` is the explicit opt-out, matching Twilio Voice.\n\n**`@msgly/vonage-voice`** speaks NCCO and authenticates with a signed\napplication JWT — an Application ID plus a private key, *not* the\napi_key/api_secret pair `@msgly/vonage-sms` uses. Two separate credentials on\none account, and mixing them up is the first thing that goes wrong, so\n`verifyCredentials` names the distinction directly. Each JWT carries its own\n`jti` because Vonage rejects a replayed token.\n\nVonage accepts a transfer NCCO inline, so `send()` redirects a live call with no\nextra endpoint to host.\n\nIt does not pretend to verify webhooks: Vonage signs voice callbacks only when\nthe application is configured for it, over a JWT in the `Authorization` header\nrather than the body. `verifySignature` returns `true` and the README says\nplainly that this means unverified, rather than implying a check that is not\nhappening.\n\nBoth map `interactive` content to keypad digits — a phone has no screen, so each\nbutton becomes the digit at its position and the prompt reads them out — and\nboth expose `parseStatuses`, where the permanence rule is the one that matters:\nonly a failed or rejected call marks the number recipient-fatal. Busy and\nno-answer are the *person*, not the line. They may answer next time, and\nsuppressing there quietly deletes a live customer.\n\n`@msgly/core` registers both in `KnownChannel` and the rate-limit table, at a\ndeliberately low rate: a call holds a line for its whole duration, so throughput\nis bounded by concurrent channels rather than requests per second.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/plivo-voice",
+          "@msgly/vonage-voice"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Fix WhatsApp send-failure handling, which retried failures that could never succeed and could not tell a dead number from a throttle.",
+        "body": "Fix WhatsApp send-failure handling, which retried failures that could never\nsucceed and could not tell a dead number from a throttle.\n\n**Every failed send was retried three times.** The hub decides retryability by\nlooking for an HTTP status inside `error.code`, but WhatsApp answers almost\neverything with HTTP 400 and puts the real cause in `error.code` as its own\napplication code. So `wa_190` (access token expired), `wa_100` (invalid\nparameter), `wa_132001` (template does not exist) and `wa_131026` (not a\nWhatsApp user) all sailed past the check and were retried with backoff, burning\nthe retry budget and the API quota to arrive at the same failure. The adapter\nnow classifies Meta's codes itself, and the core honours that verdict.\n\n**Failures carried no `permanent` flag**, so suppression stores could never act\non them: a number that is not on WhatsApp looked exactly like a rate limit and\nstayed in every future campaign.\n\nThe two questions turn out to be different ones, and conflating them is how you\nsuppress a whole contact list over a typo in a template name. `DeliveryReceipt.error`\nnow has both:\n\n- `permanent` — is this *recipient* dead? Set only for `131021` and `131026`.\n  This is what suppression reads.\n- `retryable` — could the same request ever succeed? `false` for bad tokens,\n  bad parameters, unknown or paused templates, a closed 24-hour window; `true`\n  for throttles and Meta-side outages.\n\nUnrecognised codes leave both `undefined`, which the core reads as \"retry, never\nsuppress\" — wrongly binning a reachable customer is worse than a wasted retry.\n`isRetryableError` consults the adapter's verdict first and falls back to its\nold status-sniffing heuristic only when an adapter says nothing, so no other\nadapter changes behaviour.\n\n**A failed send and a failed status webhook reported the same Meta error under\ntwo different codes** — `wa_131026` from `send()`, `131026` from\n`parseStatuses()`. Both now use the prefixed form, so one check covers both\npaths.\n\n**Meta's error detail was dropped.** `error.message` is usually generic\n(`(#132012) Parameter format does not match format in template`); the sentence\nthat says what is actually wrong lives in `error_data.details`. It is now\nappended to the message.\n\n**Documents lost their filename.** The outbound payload never set `filename`, so\nrecipients saw a name derived from the URL — `9f2c` rather than\n`invoice-0042.pdf`. `uploadMedia` also dropped it from the ref it returned, and\ninbound documents never parsed it, so there was no way to round-trip a name.\nFixed in all three places.\n\nAlso: send receipts now set `recipientId` (the webhook path already did); list\nmessages enforce Meta's cap of 10 rows across all sections, filling sections in\norder and dropping any left empty, instead of letting the API reject the whole\nmessage; and `header`/`footer` are truncated to 60 characters like every other\nlabel. Body text and row/button `id`s are deliberately left alone — truncating a\nbody loses your message, and truncating an `id` silently breaks postback\nmatching.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/whatsapp"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.7.0",
+    "date": "2026-09-11",
+    "pending": false,
+    "packageCount": 29,
+    "notes": [
+      {
+        "kind": "Patch",
+        "headline": "@msgly/core@1.7.0",
+        "body": "@msgly/core@1.7.0",
+        "packages": [
+          "@msgly/discord",
+          "@msgly/exotel",
+          "@msgly/fcm",
+          "@msgly/gmail",
+          "@msgly/googlechat",
+          "@msgly/instagram",
+          "@msgly/line",
+          "@msgly/mattermost",
+          "@msgly/messenger",
+          "@msgly/msg91",
+          "@msgly/msteams",
+          "@msgly/outlook",
+          "@msgly/plivo",
+          "@msgly/reddit",
+          "@msgly/resend",
+          "@msgly/rocketchat",
+          "@msgly/sendgrid",
+          "@msgly/ses",
+          "@msgly/slack",
+          "@msgly/smtp",
+          "@msgly/telegram",
+          "@msgly/telnyx",
+          "@msgly/tiktok",
+          "@msgly/twilio-sms",
+          "@msgly/twilio-voice",
+          "@msgly/viber",
+          "@msgly/vonage-sms",
+          "@msgly/wechat",
+          "@msgly/whatsapp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Fix the Twilio Voice response model, which could not work as designed, and close the gaps between what the adapter claimed and what it did.",
+        "body": "Fix the Twilio Voice response model, which could not work as designed, and close\n  the gaps between what the adapter claimed and what it did.\n\n  **Callers heard each other's TwiML.** The adapter buffered the reply in a single\n  `pendingTwiml` variable shared by every call. The hub calls `getInteractionAck`\n  _before_ `handleWebhook` and responds immediately, so the value was always one\n  request stale: the first caller got the literal string `ok` as their TwiML\n  document (invalid, so the call dropped), and every caller after that heard the\n  response meant for the previous one — including a different person's. There was\n  no test for `send()` or `getInteractionAck`, which is how it survived.\n\n  A phone call is request/response: Twilio holds the HTTP request open and speaks\n  whatever comes back, so the reply has to be produced _during_ that request.\n  There is now a `respond(message)` config hook that does exactly that, per\n  request, with no shared state. It is deliberately synchronous — Twilio abandons\n  a webhook after ~15s and an `await` there is dead air on the line.\n\n  `send()` no longer buffers anything. It drives a call that is already in\n  progress through Twilio's REST API (`POST /Calls/{Sid}`), keyed on\n  `metadata.callSid` from the inbound message, which is the only way Twilio lets\n  you change a live call. Without a CallSid it fails with a message pointing at\n  `respond` instead.\n\n  **`capabilities.media.audio` was `true` while `send()` rejected everything but\n  text.** Because the flag said yes, the hub passed audio through and the adapter\n  then failed it at runtime, instead of the hub refusing it cleanly. Audio now\n  maps to `<Play>`, and a non-URL `mediaRef` is rejected with the reason (Twilio\n  fetches the file itself, so an uploaded media id means nothing to it).\n\n  **The README documented an interactive `<Gather>` mapping that did not exist**\n  — `interactive.buttons` was `false` and `send()` refused the content type.\n  Implemented: buttons map to DTMF digits by position, and the keypress comes back\n  as an inbound text message containing the digit.\n\n  **Unverifiable webhooks are now rejected.** `verifySignature` previously\n  returned `true` when `webhookUrl` was unset. The signature covers the full URL,\n  so without one there is nothing to verify — and accepting anyway let anyone who\n  found the endpoint fake calls and drive the IVR. Set\n  `allowUnsignedWebhooks: true` where something else authenticates the request.\n  This is the one behaviour change that can affect an existing deployment: if you\n  run without `webhookUrl`, you were never verifying anything, and now you must\n  say so explicitly.\n\n  Also added: `parseStatuses()` turning call progress into delivery receipts\n  (ringing → sent, answered → delivered, completed → read, with busy and no-answer\n  marked transient and only a failed call permanent, so a busy signal never\n  suppresses a number); `updateCall()` and `endCall()`; and `downloadMedia()`,\n  which now fetches `<Record>` recordings — they sit behind account credentials\n  and Twilio only serves them with a file extension, so both are handled.\n\n  Tests went from 16 to 40, covering the request/response path, the REST send,\n  status mapping and call control — none of which had any coverage before.",
+        "packages": [
+          "@msgly/twilio-voice"
+        ]
+      }
+    ]
+  },
+  {
     "version": "1.6.0",
     "date": null,
+    "pending": false,
     "packageCount": 30,
     "notes": [
       {
@@ -34,6 +145,7 @@
   {
     "version": "1.5.0",
     "date": "2026-09-02",
+    "pending": false,
     "packageCount": 30,
     "notes": [
       {
@@ -50,6 +162,7 @@
   {
     "version": "1.4.0",
     "date": "2026-08-15",
+    "pending": false,
     "packageCount": 29,
     "notes": [
       {
@@ -66,6 +179,7 @@
   {
     "version": "1.3.0",
     "date": "2026-08-15",
+    "pending": false,
     "packageCount": 28,
     "notes": [
       {
@@ -108,6 +222,7 @@
   {
     "version": "1.2.0",
     "date": "2026-08-15",
+    "pending": false,
     "packageCount": 28,
     "notes": [
       {
@@ -125,6 +240,7 @@
   {
     "version": "1.1.0",
     "date": "2026-08-15",
+    "pending": false,
     "packageCount": 26,
     "notes": [
       {

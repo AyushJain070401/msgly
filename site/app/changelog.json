@@ -1,9 +1,9 @@
 [
   {
-    "version": "1.7.0",
+    "version": "1.8.0",
     "date": null,
     "pending": true,
-    "packageCount": 12,
+    "packageCount": 11,
     "notes": [
       {
         "kind": "Minor",
@@ -38,14 +38,6 @@
       },
       {
         "kind": "Minor",
-        "headline": "Fix the Twilio Voice response model, which could not work as designed, and close the gaps between what the adapter claimed and what it did.",
-        "body": "Fix the Twilio Voice response model, which could not work as designed, and close\nthe gaps between what the adapter claimed and what it did.\n\n**Callers heard each other's TwiML.** The adapter buffered the reply in a single\n`pendingTwiml` variable shared by every call. The hub calls `getInteractionAck`\n*before* `handleWebhook` and responds immediately, so the value was always one\nrequest stale: the first caller got the literal string `ok` as their TwiML\ndocument (invalid, so the call dropped), and every caller after that heard the\nresponse meant for the previous one — including a different person's. There was\nno test for `send()` or `getInteractionAck`, which is how it survived.\n\nA phone call is request/response: Twilio holds the HTTP request open and speaks\nwhatever comes back, so the reply has to be produced *during* that request.\nThere is now a `respond(message)` config hook that does exactly that, per\nrequest, with no shared state. It is deliberately synchronous — Twilio abandons\na webhook after ~15s and an `await` there is dead air on the line.\n\n`send()` no longer buffers anything. It drives a call that is already in\nprogress through Twilio's REST API (`POST /Calls/{Sid}`), keyed on\n`metadata.callSid` from the inbound message, which is the only way Twilio lets\nyou change a live call. Without a CallSid it fails with a message pointing at\n`respond` instead.\n\n**`capabilities.media.audio` was `true` while `send()` rejected everything but\ntext.** Because the flag said yes, the hub passed audio through and the adapter\nthen failed it at runtime, instead of the hub refusing it cleanly. Audio now\nmaps to `<Play>`, and a non-URL `mediaRef` is rejected with the reason (Twilio\nfetches the file itself, so an uploaded media id means nothing to it).\n\n**The README documented an interactive `<Gather>` mapping that did not exist**\n— `interactive.buttons` was `false` and `send()` refused the content type.\nImplemented: buttons map to DTMF digits by position, and the keypress comes back\nas an inbound text message containing the digit.\n\n**Unverifiable webhooks are now rejected.** `verifySignature` previously\nreturned `true` when `webhookUrl` was unset. The signature covers the full URL,\nso without one there is nothing to verify — and accepting anyway let anyone who\nfound the endpoint fake calls and drive the IVR. Set\n`allowUnsignedWebhooks: true` where something else authenticates the request.\nThis is the one behaviour change that can affect an existing deployment: if you\nrun without `webhookUrl`, you were never verifying anything, and now you must\nsay so explicitly.\n\nAlso added: `parseStatuses()` turning call progress into delivery receipts\n(ringing → sent, answered → delivered, completed → read, with busy and no-answer\nmarked transient and only a failed call permanent, so a busy signal never\nsuppresses a number); `updateCall()` and `endCall()`; and `downloadMedia()`,\nwhich now fetches `<Record>` recordings — they sit behind account credentials\nand Twilio only serves them with a file extension, so both are handled.\n\nTests went from 16 to 40, covering the request/response path, the REST send,\nstatus mapping and call control — none of which had any coverage before.",
-        "packages": [
-          "@msgly/twilio-voice"
-        ]
-      },
-      {
-        "kind": "Minor",
         "headline": "Add Plivo Voice and Vonage Voice, taking voice from one provider to three.",
         "body": "Add Plivo Voice and Vonage Voice, taking voice from one provider to three.\n\nBoth follow the request/response model `@msgly/twilio-voice` was rewritten to\nuse in this release, because a phone call genuinely is request/response: the\nprovider holds the HTTP request open and speaks whatever comes back. That reply\ncannot come from the hub's `on('message')` handler, which runs *after* the\nresponse has already been sent. So both take a `respond(message)` hook that\nproduces the answer inside the webhook request, with no shared state — and both\nare deliberately synchronous, since an `await` there is dead air on the line.\n\n**`@msgly/plivo-voice`** speaks Plivo XML and reuses the Auth ID and Token from\n`@msgly/plivo`, so one set of credentials covers SMS and voice. Text is\nXML-escaped, which matters more than it sounds: an ampersand in a customer's\nname would otherwise break the whole document. Plivo redirects a live call to a\nURL rather than accepting XML inline, so `send()` needs `metadata.transferUrl`\nand says so in the error rather than failing vaguely.\n\nWebhook verification uses Plivo's V3 scheme and accepts the several\ncomma-separated signatures sent during key rotation. Without a `webhookUrl`\nthere is nothing to verify, so it rejects rather than accepting blindly —\n`allowUnsignedWebhooks` is the explicit opt-out, matching Twilio Voice.\n\n**`@msgly/vonage-voice`** speaks NCCO and authenticates with a signed\napplication JWT — an Application ID plus a private key, *not* the\napi_key/api_secret pair `@msgly/vonage-sms` uses. Two separate credentials on\none account, and mixing them up is the first thing that goes wrong, so\n`verifyCredentials` names the distinction directly. Each JWT carries its own\n`jti` because Vonage rejects a replayed token.\n\nVonage accepts a transfer NCCO inline, so `send()` redirects a live call with no\nextra endpoint to host.\n\nIt does not pretend to verify webhooks: Vonage signs voice callbacks only when\nthe application is configured for it, over a JWT in the `Authorization` header\nrather than the body. `verifySignature` returns `true` and the README says\nplainly that this means unverified, rather than implying a check that is not\nhappening.\n\nBoth map `interactive` content to keypad digits — a phone has no screen, so each\nbutton becomes the digit at its position and the prompt reads them out — and\nboth expose `parseStatuses`, where the permanence rule is the one that matters:\nonly a failed or rejected call marks the number recipient-fatal. Busy and\nno-answer are the *person*, not the line. They may answer next time, and\nsuppressing there quietly deletes a live customer.\n\n`@msgly/core` registers both in `KnownChannel` and the rate-limit table, at a\ndeliberately low rate: a call holds a line for its whole duration, so throughput\nis bounded by concurrent channels rather than requests per second.",
         "packages": [
@@ -61,6 +53,58 @@
         "packages": [
           "@msgly/core",
           "@msgly/whatsapp"
+        ]
+      }
+    ]
+  },
+  {
+    "version": "1.7.0",
+    "date": "2026-09-11",
+    "pending": false,
+    "packageCount": 29,
+    "notes": [
+      {
+        "kind": "Patch",
+        "headline": "@msgly/core@1.7.0",
+        "body": "@msgly/core@1.7.0",
+        "packages": [
+          "@msgly/discord",
+          "@msgly/exotel",
+          "@msgly/fcm",
+          "@msgly/gmail",
+          "@msgly/googlechat",
+          "@msgly/instagram",
+          "@msgly/line",
+          "@msgly/mattermost",
+          "@msgly/messenger",
+          "@msgly/msg91",
+          "@msgly/msteams",
+          "@msgly/outlook",
+          "@msgly/plivo",
+          "@msgly/reddit",
+          "@msgly/resend",
+          "@msgly/rocketchat",
+          "@msgly/sendgrid",
+          "@msgly/ses",
+          "@msgly/slack",
+          "@msgly/smtp",
+          "@msgly/telegram",
+          "@msgly/telnyx",
+          "@msgly/tiktok",
+          "@msgly/twilio-sms",
+          "@msgly/twilio-voice",
+          "@msgly/viber",
+          "@msgly/vonage-sms",
+          "@msgly/wechat",
+          "@msgly/whatsapp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Fix the Twilio Voice response model, which could not work as designed, and close the gaps between what the adapter claimed and what it did.",
+        "body": "Fix the Twilio Voice response model, which could not work as designed, and close\n  the gaps between what the adapter claimed and what it did.\n\n  **Callers heard each other's TwiML.** The adapter buffered the reply in a single\n  `pendingTwiml` variable shared by every call. The hub calls `getInteractionAck`\n  _before_ `handleWebhook` and responds immediately, so the value was always one\n  request stale: the first caller got the literal string `ok` as their TwiML\n  document (invalid, so the call dropped), and every caller after that heard the\n  response meant for the previous one — including a different person's. There was\n  no test for `send()` or `getInteractionAck`, which is how it survived.\n\n  A phone call is request/response: Twilio holds the HTTP request open and speaks\n  whatever comes back, so the reply has to be produced _during_ that request.\n  There is now a `respond(message)` config hook that does exactly that, per\n  request, with no shared state. It is deliberately synchronous — Twilio abandons\n  a webhook after ~15s and an `await` there is dead air on the line.\n\n  `send()` no longer buffers anything. It drives a call that is already in\n  progress through Twilio's REST API (`POST /Calls/{Sid}`), keyed on\n  `metadata.callSid` from the inbound message, which is the only way Twilio lets\n  you change a live call. Without a CallSid it fails with a message pointing at\n  `respond` instead.\n\n  **`capabilities.media.audio` was `true` while `send()` rejected everything but\n  text.** Because the flag said yes, the hub passed audio through and the adapter\n  then failed it at runtime, instead of the hub refusing it cleanly. Audio now\n  maps to `<Play>`, and a non-URL `mediaRef` is rejected with the reason (Twilio\n  fetches the file itself, so an uploaded media id means nothing to it).\n\n  **The README documented an interactive `<Gather>` mapping that did not exist**\n  — `interactive.buttons` was `false` and `send()` refused the content type.\n  Implemented: buttons map to DTMF digits by position, and the keypress comes back\n  as an inbound text message containing the digit.\n\n  **Unverifiable webhooks are now rejected.** `verifySignature` previously\n  returned `true` when `webhookUrl` was unset. The signature covers the full URL,\n  so without one there is nothing to verify — and accepting anyway let anyone who\n  found the endpoint fake calls and drive the IVR. Set\n  `allowUnsignedWebhooks: true` where something else authenticates the request.\n  This is the one behaviour change that can affect an existing deployment: if you\n  run without `webhookUrl`, you were never verifying anything, and now you must\n  say so explicitly.\n\n  Also added: `parseStatuses()` turning call progress into delivery receipts\n  (ringing → sent, answered → delivered, completed → read, with busy and no-answer\n  marked transient and only a failed call permanent, so a busy signal never\n  suppresses a number); `updateCall()` and `endCall()`; and `downloadMedia()`,\n  which now fetches `<Record>` recordings — they sit behind account credentials\n  and Twilio only serves them with a file extension, so both are handled.\n\n  Tests went from 16 to 40, covering the request/response path, the REST send,\n  status mapping and call control — none of which had any coverage before.",
+        "packages": [
+          "@msgly/twilio-voice"
         ]
       }
     ]

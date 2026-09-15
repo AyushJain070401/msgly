@@ -1,6 +1,6 @@
 {
   "name": "@msgly/rcs-twilio",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "RCS Business Messaging adapter for Msgly, via Twilio",
   "license": "MIT",
   "type": "module",

@@ -334,11 +334,18 @@ describe('verifySignature', () => {
       }),
     ).toBe(true);
 
+    // Flip the last hex digit to something it definitely is not. Replacing it
+    // with a fixed character would leave the signature untouched whenever it
+    // already ended in that character — a 1-in-16 flake, since the signature
+    // changes with the timestamp on every run.
+    const tampered = signature.slice(0, -1) + (signature.endsWith('0') ? '1' : '0');
+    expect(tampered).not.toBe(signature);
+
     expect(
       await adapter.verifySignature({
         headers: {},
         rawBody: new Uint8Array(),
-        body: { timestamp, token, signature: signature.replace(/.$/, '0') },
+        body: { timestamp, token, signature: tampered },
         query: {},
       }),
     ).toBe(false);

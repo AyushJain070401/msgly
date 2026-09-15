@@ -1,6 +1,6 @@
 {
   "name": "@msgly/vonage-voice",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Vonage Voice adapter for Msgly",
   "license": "MIT",
   "type": "module",

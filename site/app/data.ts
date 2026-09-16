@@ -36,6 +36,7 @@ export const channels: Channel[] = [
   { name: 'Vonage', pkg: '@msgly/vonage-sms', category: 'SMS & voice', notes: 'Global SMS delivery with signed inbound webhooks', campaign: 'Outbound' },
   { name: 'Plivo', pkg: '@msgly/plivo', category: 'SMS & voice', notes: 'Global SMS and MMS with V3 signature verification', campaign: 'Outbound' },
   { name: 'Telnyx', pkg: '@msgly/telnyx', category: 'SMS & voice', notes: 'Global SMS and MMS, Ed25519-signed webhooks', campaign: 'Outbound' },
+  { name: 'Dial', pkg: '@msgly/dial', category: 'SMS & voice', notes: 'Agent-provisioned numbers — SMS, MMS and iMessage with HMAC-signed webhooks', campaign: 'Policy-gated' },
   { name: 'Twilio Voice', pkg: '@msgly/twilio-voice', category: 'SMS & voice', notes: 'TwiML flows, Gather input and outbound calls', campaign: '—' },
 
   { name: 'Reddit', pkg: '@msgly/reddit', category: 'Publishing', notes: 'Subreddit posts, thread replies and inbox polling', campaign: 'Broadcast' },
@@ -58,30 +59,40 @@ export const categories = ['All', 'Chat & social', 'Email', 'SMS & voice', 'Push
 export const features = [
   {
     title: 'Startup credentials check',
+    file: 'boot.ts',
     body: 'Every adapter ships verifyCredentials(). hub.connect() calls the platform whoami endpoint for each channel and returns either confirmation or a precise hint — which env var, where to find it, how to regenerate.',
     code: `const report = await hub.connect();
-// { telegram: { ok: true, accountInfo: '@my_bot' },
-//   whatsapp: { ok: false, reason: 'unauthorized', hint: '...' } }
+// telegram → ok: '@my_bot'
+// whatsapp → unauthorized (+ hint)
 
-// Or fail-fast for boot scripts:
-await hub.connect({ throwOnFailure: true });`,
+// Or fail fast when booting:
+await hub.connect({
+  throwOnFailure: true,
+});`,
   },
   {
     title: 'One webhook handler, every channel',
+    file: 'server.ts',
     body: 'hub.createWebhookHandler() returns { get, post } for any Express-like framework: Meta GET handshake, per-platform HMAC signature verification, channel dispatch and idempotent de-duplication by externalId.',
-    code: `const handlers = hub.createWebhookHandler();
-app.get('/webhook/:channel', handlers.get);
-app.post('/webhook/:channel', handlers.post);`,
+    code: `const wh = hub.createWebhookHandler();
+
+app.get('/webhook/:channel', wh.get);
+app.post('/webhook/:channel', wh.post);`,
   },
   {
     title: 'Smart retry',
+    file: 'hub.ts',
     body: 'Transient failures retry with exponential backoff and jitter. Permanent failures — bad credentials, invalid recipients — fail immediately instead of burning your rate limit.',
     code: `const hub = createHub({
-  retry: { attempts: 4, baseDelayMs: 250 },
+  retry: {
+    attempts: 4,
+    baseDelayMs: 250,
+  },
 });`,
   },
   {
     title: 'State persistence',
+    file: 'hub.ts',
     body: 'Bring any KV store — Redis, DynamoDB, Cloudflare KV. The hub uses it for idempotency keys, conversation state and suppression, so restarts and multiple instances stay consistent.',
     code: `const hub = createHub({
   storage: redisStorage(redisClient),
@@ -89,16 +100,24 @@ app.post('/webhook/:channel', handlers.post);`,
   },
   {
     title: 'Capability checks',
+    file: 'react.ts',
     body: 'Ask before you send. Channels differ on attachments, buttons, templates and reactions — msgly answers up front rather than failing at the API boundary.',
-    code: `if (hub.supports('telegram', 'reaction')) {
+    code: `const can = hub.supports(
+  'telegram', 'reaction',
+);
+
+if (can) {
   await hub.react({ /* ... */ });
 }`,
   },
   {
     title: 'Platform limits enforced',
+    file: 'limits.ts',
     body: 'Text length caps, attachment size and MIME restrictions are validated locally before the request goes out, so you get a clear error instead of an opaque platform rejection.',
-    code: `// 4096 chars on Telegram, 1600 on SMS —
-// checked before the network call.`,
+    code: `// 4096 chars on Telegram,
+// 1600 on SMS — both checked
+// before the network call.
+await hub.send({ /* ... */ });`,
   },
 ];
 

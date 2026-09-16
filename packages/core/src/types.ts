@@ -42,7 +42,8 @@ export type KnownChannel =
   | 'vonage-voice'
   | 'exotel-voice'
   | 'mailgun'
-  | 'postmark';
+  | 'postmark'
+  | 'dial';
 
 /**
  * A channel identifier. Open by design: `(string & {})` keeps autocomplete for

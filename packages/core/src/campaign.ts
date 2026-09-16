@@ -58,6 +58,9 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   resend: { perSecond: 2, burst: 2 },
   // Telnyx allows high throughput; the per-number MPS is the real constraint.
   telnyx: { perSecond: 10, burst: 20 },
+  // Dial's own ceiling for a freshly approved 10DLC brand on a low tier is
+  // 0.25-4 messages/s, and the bottom of that range is what a new brand gets.
+  dial: { perSecond: 1, burst: 2 },
   // SendGrid's v3 API is generous — the plan's daily quota binds first.
   sendgrid: { perSecond: 25, burst: 50 },
   // Viber's public account send limit is generous but broadcast-metered.

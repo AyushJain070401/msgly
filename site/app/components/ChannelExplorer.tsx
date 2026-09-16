@@ -7,6 +7,7 @@ import BrandMark, { markColor } from './BrandMark';
 // Short form for the card tag; the full wording lives in the tier table below.
 const SHORT: Record<string, string> = {
   Outbound: 'Outbound',
+  Broadcast: 'Broadcast',
   'Policy-gated': 'Policy-gated',
   'Reply-only': 'Reply-only',
   'Not for campaigns': 'No campaigns',
@@ -14,6 +15,7 @@ const SHORT: Record<string, string> = {
 
 const TONE: Record<string, string> = {
   Outbound: 'good',
+  Broadcast: 'good',
   'Policy-gated': 'warn',
   'Reply-only': 'warn',
   'Not for campaigns': 'bad',
@@ -77,8 +79,11 @@ export default function ChannelExplorer() {
                   <div className="pkg">{c.pkg}</div>
                 </div>
                 {c.campaign !== '—' ? (
-                  <span className={`tag ${TONE[c.campaign]}`} title={c.campaign}>
-                    {SHORT[c.campaign]}
+                  <span
+                    className={TONE[c.campaign] ? `tag ${TONE[c.campaign]}` : 'tag'}
+                    title={c.campaign}
+                  >
+                    {SHORT[c.campaign] ?? c.campaign}
                   </span>
                 ) : null}
               </div>

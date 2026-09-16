@@ -157,6 +157,30 @@ export const customMarks: Record<string, { hex: string; node: ReactElement }> = 
     ),
   },
 
+  '@msgly/dial': {
+    hex: '#2C2C2A',
+    node: (
+      <g>
+        <rect x="1" y="1" width="22" height="22" rx="5" fill="#2C2C2A" />
+        <circle cx="12" cy="12" r="2.41" fill="#F1EFE8" />
+        <path
+          d="M12 5.34A6.66 6.66 0 0 1 18.66 12"
+          fill="none"
+          stroke="#F1EFE8"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M12 18.66A6.66 6.66 0 0 1 5.34 12"
+          fill="none"
+          stroke="#F1EFE8"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </g>
+    ),
+  },
+
   '@msgly/telnyx': {
     hex: '#00E3AA',
     node: (

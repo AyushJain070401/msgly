@@ -407,6 +407,21 @@ code, .inline-code { font-family: var(--mono); color: var(--accent); font-size: 
 .feature-card { display: flex; flex-direction: column; height: 100%; }
 .feature-card .code-hold { margin-top: auto; padding-top: 18px; }
 
+/* Feature code panels are narrow (~315px), so they get their own type scale —
+   the samples are written to fit without horizontal scrolling. */
+.feature-card .code pre { padding: 16px 18px; font-size: 12.5px; }
+
+/* Scrolling shadows: the two `local` gradients travel with the content and sit
+   over the shadows at each end, so a shadow is only visible when there is
+   actually more code in that direction. Nothing is ever silently clipped. */
+.feature-card .code pre {
+  background:
+    linear-gradient(to right, #0d1120, rgba(13, 17, 32, 0)) 0 0 / 24px 100% no-repeat local,
+    linear-gradient(to left, #0d1120, rgba(13, 17, 32, 0)) 100% 0 / 24px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0)) 0 0 / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0)) 100% 0 / 14px 100% no-repeat scroll;
+}
+
 /* channel cards: tag sits top-right, on the name's line */
 .channel-card { display: flex; flex-direction: column; height: 100%; }
 .channel-card .card-head { align-items: flex-start; }
@@ -435,7 +450,10 @@ code, .inline-code { font-family: var(--mono); color: var(--accent); font-size: 
 .code pre .n { color: #ffb182; }
 
 /* ---------- split ---------- */
-.split { display: grid; gap: 34px; grid-template-columns: 1fr 1fr; align-items: start; }
+/* The code panel is always the taller column, sometimes by 500px+. Starting
+   both columns at the top dumped all that height as dead space under the
+   prose; centring splits it evenly so the pairing reads as deliberate. */
+.split { display: grid; gap: 34px; grid-template-columns: 1fr 1fr; align-items: center; }
 @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
 
 /* ---------- steps ---------- */
@@ -444,19 +462,188 @@ code, .inline-code { font-family: var(--mono); color: var(--accent); font-size: 
 .step p { color: var(--muted); margin: 6px 0 16px; font-size: 15px; }
 @media (max-width: 700px) { .step { grid-template-columns: 1fr; gap: 10px; } }
 
+/* ---------- flow diagram ---------- */
+.flow-scroll { overflow-x: auto; margin-top: 30px; padding-bottom: 4px; }
+.flow-svg { display: block; width: 100%; min-width: 720px; height: auto; }
+
+.flow-node rect {
+  fill: #fff; stroke: var(--border); stroke-width: 1.2;
+  filter: drop-shadow(0 6px 18px rgba(16, 19, 28, 0.06));
+}
+.flow-node[data-own="msgly"] rect { stroke: var(--border-lit); fill: #fbfcff; }
+.flow-node[data-own="platform"] rect { fill: var(--bg-soft); filter: none; }
+
+.flow-title {
+  text-anchor: middle; font-family: var(--mono); font-size: 13px;
+  fill: var(--text);
+}
+.flow-node[data-own="msgly"] .flow-title { fill: var(--accent); }
+.flow-node[data-own="platform"] .flow-title { fill: var(--muted); }
+.flow-sub { text-anchor: middle; font-family: var(--sans); font-size: 11px; fill: var(--dim); }
+
+.flow-lane { stroke: var(--border); stroke-width: 1.5; }
+.flow-tip { fill: none; stroke: var(--dim); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.flow-lane-label {
+  text-anchor: middle; font-family: var(--mono); font-size: 11.5px;
+  fill: var(--dim); letter-spacing: 0.04em;
+}
+
+/* One packet per direction, looping the whole chain. The eased timing makes it
+   read as a message being handed along rather than a dot on a conveyor. */
+.flow-packet { r: 4.5; }
+.flow-packet.out { fill: var(--accent); animation: packet-out 4.4s ease-in-out infinite; }
+.flow-packet.in { fill: var(--accent-3); animation: packet-in 4.4s ease-in-out infinite; animation-delay: 2.2s; }
+
+@keyframes packet-out {
+  0%   { transform: translateX(var(--flow-from)); opacity: 0; }
+  8%   { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(var(--flow-to)); opacity: 0; }
+}
+@keyframes packet-in {
+  0%   { transform: translateX(var(--flow-to)); opacity: 0; }
+  8%   { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(var(--flow-from)); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-packet { animation: none !important; opacity: 1; }
+  .flow-packet.out { transform: translateX(var(--flow-from)); }
+  .flow-packet.in { transform: translateX(var(--flow-to)); }
+}
+
 /* ---------- architecture ---------- */
 .arch { display: grid; gap: 14px; margin-top: 34px; }
 .layer {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 20px 24px; background: #fff; box-shadow: var(--shadow);
-  transition: transform 0.25s, box-shadow 0.25s;
+  transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
+  /* A left rail carries the one thing this diagram exists to say: which layers
+     msgly is responsible for, and which two are yours and the platforms'. */
+  border-left: 3px solid var(--border);
 }
+.layer[data-own="msgly"] { border-left-color: var(--accent); }
+.layer[data-own="platform"] { background: var(--bg-soft); box-shadow: none; }
 .layer:hover { transform: translateX(6px); box-shadow: var(--shadow-lg); }
+.layer[data-own="platform"]:hover { box-shadow: var(--shadow); }
+
+.layer-head { display: flex; align-items: center; gap: 12px; }
 .layer b { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+.layer[data-own="platform"] b { color: var(--muted); }
 .layer p { margin: 6px 0 0; color: var(--muted); font-size: 14.5px; }
-.arrow { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 18px; line-height: 1; }
-.arrow span { display: inline-block; animation: bob 2.4s ease-in-out infinite; }
-@keyframes bob { 50% { transform: translateY(5px); opacity: 0.4; } }
+
+.layer-tag {
+  margin-left: auto; flex: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--dim); background: var(--bg-soft);
+}
+.layer[data-own="msgly"] .layer-tag {
+  color: var(--accent); border-color: var(--border-lit); background: rgba(31, 111, 235, 0.06);
+}
+
+/* Messages cross every boundary in both directions — a single downward arrow
+   would hide the whole inbound half of the library. */
+.arrow {
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  color: var(--dim); font-family: var(--mono); font-size: 12px; line-height: 1;
+}
+.arrow .flow { display: inline-block; white-space: nowrap; }
+.arrow .flow:first-child { animation: bob 2.4s ease-in-out infinite; }
+.arrow .flow:last-child { animation: bob-up 2.4s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(4px); opacity: 0.45; } }
+@keyframes bob-up { 50% { transform: translateY(-4px); opacity: 0.45; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow .flow { animation: none; }
+}
+
+@media (max-width: 560px) {
+  .arch { gap: 12px; }
+  .layer { padding: 18px 18px; }
+  .layer-head { flex-wrap: wrap; gap: 8px; }
+  .layer-tag { margin-left: 0; }
+  .arrow { gap: 12px; font-size: 11px; }
+}
+
+/* ---------- capability matrix ---------- */
+.matrix-head { margin-top: 58px; }
+.matrix-head h3 { font-size: 22px; letter-spacing: -0.015em; margin: 0 0 8px; }
+
+.matrix-wrap { margin-top: 10px; }
+.matrix-scroll {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius);
+  background: #fff; box-shadow: var(--shadow);
+  /* Same scrolling-shadow trick as the feature code panels: a shadow appears
+     only while there is more table in that direction. */
+  background:
+    linear-gradient(to right, #fff, rgba(255, 255, 255, 0)) 0 0 / 28px 100% no-repeat local,
+    linear-gradient(to left, #fff, rgba(255, 255, 255, 0)) 100% 0 / 28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(16, 19, 28, 0.13), rgba(16, 19, 28, 0)) 0 0 / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(16, 19, 28, 0.13), rgba(16, 19, 28, 0)) 100% 0 / 14px 100% no-repeat scroll,
+    #fff;
+}
+.matrix { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+
+/* The page nav is sticky at 65px, so the header row parks just beneath it
+   rather than sliding underneath and disappearing. */
+.matrix thead th {
+  position: sticky; top: 65px; z-index: 2; background: var(--bg-soft);
+  font-family: var(--mono); font-weight: 500; font-size: 11.5px; color: var(--muted);
+  padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.matrix-groups th {
+  top: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--dim); border-bottom: 1px solid var(--border);
+}
+.matrix-groups th + th { border-left: 1px solid var(--border); }
+.matrix thead tr:last-child th { top: 96px; }
+
+/* The channel name stays put while the flags scroll under it — a row of ticks
+   means nothing once you have lost track of which channel it belongs to. */
+.matrix tbody th, .matrix thead tr:last-child th:first-child {
+  position: sticky; left: 0; z-index: 3; text-align: left;
+  background: #fff; border-right: 1px solid var(--border);
+  padding: 10px 16px 10px 18px; min-width: 176px;
+}
+.matrix thead tr:last-child th:first-child { z-index: 4; background: var(--bg-soft); }
+.matrix-groups th:first-child { position: sticky; left: 0; z-index: 4; background: var(--bg-soft); }
+
+.matrix tbody th { font-weight: 500; }
+.m-name { display: block; color: var(--text); font-size: 13.5px; }
+.m-pkg { display: block; font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 1px; }
+
+.matrix td {
+  text-align: center; padding: 10px 10px; border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 14px;
+}
+.matrix tbody tr:last-child td, .matrix tbody tr:last-child th { border-bottom: 0; }
+/* A tick alone was too light to scan across 13 columns. Washing the whole cell
+   turns the table into a heatmap — what a channel can carry reads as a shape
+   before you read a single label — while staying far short of a solid fill,
+   which at 500 cells would overwhelm everything around it. */
+.matrix td[data-on="yes"] {
+  background: rgba(0, 168, 132, 0.1);
+  color: #00795c; font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(0, 168, 132, 0.12);
+}
+.matrix td[data-on="no"] { color: #d3d9e4; }
+
+.matrix tbody tr:hover th, .matrix tbody tr:hover td[data-on="no"] { background: #f7f9fe; }
+.matrix tbody tr:hover td[data-on="yes"] { background: rgba(0, 168, 132, 0.19); }
+
+.matrix-note { color: var(--dim); font-size: 13px; margin: 14px 0 0; max-width: 70ch; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+@media (max-width: 700px) {
+  .matrix tbody th, .matrix thead tr:last-child th:first-child { min-width: 132px; padding-left: 14px; }
+  .matrix td { padding: 9px 8px; }
+}
 
 /* ---------- tiers ---------- */
 .tier { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; background: #fff; box-shadow: var(--shadow); }

@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 4321",
-    "build": "node scripts/gen-changelog.mjs && next build",
+    "build": "node scripts/gen-changelog.mjs && node scripts/gen-capabilities.mjs && next build",
     "gen:icons": "node scripts/gen-icons.mjs",
     "gen:changelog": "node scripts/gen-changelog.mjs",
-    "start": "next start"
+    "start": "next start",
+    "gen:capabilities": "node scripts/gen-capabilities.mjs"
   },
   "dependencies": {
     "next": "^14.2.35",

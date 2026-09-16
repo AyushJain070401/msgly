@@ -1,6 +1,8 @@
 import Nav from './components/Nav';
 import Reveal from './components/Reveal';
 import CodeBlock from './components/CodeBlock';
+import FlowDiagram from './components/FlowDiagram';
+import CapabilityMatrix from './components/CapabilityMatrix';
 import ChannelExplorer from './components/ChannelExplorer';
 import HeroOrbit from './components/HeroOrbit';
 import CountUp from './components/CountUp';
@@ -152,12 +154,26 @@ export default function Home() {
             </Reveal>
             <Reveal delay={120}>
               <div className="callout">
-                <b>No adapter for LinkedIn, X/Twitter DM or iMessage.</b>
+                <b>No adapter for LinkedIn or X/Twitter DM.</b>
                 <p>
-                  None of them has a usable API for this — LinkedIn&apos;s messaging API is partner-gated, and automating
-                  the web UI violates their terms and gets accounts banned.
+                  Neither has a usable API for this — LinkedIn&apos;s messaging API is partner-gated, and automating the
+                  web UI violates their terms and gets accounts banned. iMessage is reachable through{' '}
+                  <code style={{ fontFamily: 'var(--mono)' }}>@msgly/dial</code>, on a Dial-provisioned number.
                 </p>
               </div>
+            </Reveal>
+
+            <Reveal delay={140}>
+              <div className="matrix-head">
+                <h3>What each channel can actually carry</h3>
+                <p className="lede">
+                  Capabilities are not uniform, and pretending otherwise is how a send fails in production. Every
+                  adapter declares what it supports; the hub refuses anything else up front.
+                </p>
+              </div>
+            </Reveal>
+            <Reveal delay={160}>
+              <CapabilityMatrix />
             </Reveal>
           </div>
         </section>
@@ -206,7 +222,7 @@ export default function Home() {
                     <h3>{f.title}</h3>
                     <p>{f.body}</p>
                     <div className="code-hold">
-                      <CodeBlock code={f.code} />
+                      <CodeBlock code={f.code} file={f.file} />
                     </div>
                   </div>
                 </Reveal>
@@ -307,42 +323,61 @@ export default function Home() {
           <div className="wrap">
             <Reveal>
               <p className="eyebrow">Architecture</p>
-              <h2>Three layers, clean contracts.</h2>
+              <h2>Four layers, clean contracts.</h2>
               <p className="lede">
-                Adding a new channel is one new package — no core changes needed.
+                Adding a new channel is one new package — no core changes needed. You own the top layer, the platforms own
+                the bottom, and the two in between are the only ones msgly asks you to think about.
               </p>
+            </Reveal>
+            <Reveal delay={60}>
+              <FlowDiagram />
             </Reveal>
             <Reveal delay={100}>
               <div className="arch">
-                <div className="layer">
-                  <b>Your app</b>
+                <div className="layer" data-own="you">
+                  <div className="layer-head">
+                    <b>Your app</b>
+                    <span className="layer-tag">yours</span>
+                  </div>
                   <p>Express, Fastify, Next.js route handlers, a worker — anything that can receive an HTTP POST.</p>
                 </div>
                 <div className="arrow">
-                  <span>↓</span>
+                  <span className="flow">↓ send</span>
+                  <span className="flow">↑ receive</span>
                 </div>
-                <div className="layer">
-                  <b>@msgly/core</b>
+                <div className="layer" data-own="msgly">
+                  <div className="layer-head">
+                    <b>@msgly/core</b>
+                    <span className="layer-tag">msgly</span>
+                  </div>
                   <p>
                     Unified types, the MessagingHub orchestrator, retries, idempotency, capability checks, rate limiting,
                     storage and suppression.
                   </p>
                 </div>
                 <div className="arrow">
-                  <span>↓</span>
+                  <span className="flow">↓ send</span>
+                  <span className="flow">↑ handleWebhook</span>
                 </div>
-                <div className="layer">
-                  <b>Channel adapters</b>
+                <div className="layer" data-own="msgly">
+                  <div className="layer-head">
+                    <b>Channel adapters</b>
+                    <span className="layer-tag">msgly · {adapterCount} packages</span>
+                  </div>
                   <p>
                     One package per platform. Each implements the same <code style={{ fontFamily: 'var(--mono)' }}>Adapter</code>{' '}
                     interface and ships its own <code style={{ fontFamily: 'var(--mono)' }}>verifyCredentials()</code>.
                   </p>
                 </div>
                 <div className="arrow">
-                  <span>↓</span>
+                  <span className="flow">↓ HTTP</span>
+                  <span className="flow">↑ webhooks</span>
                 </div>
-                <div className="layer">
-                  <b>Platform APIs</b>
+                <div className="layer" data-own="platform">
+                  <div className="layer-head">
+                    <b>Platform APIs</b>
+                    <span className="layer-tag">theirs</span>
+                  </div>
                   <p>Telegram, Meta, LINE, Twilio, Google, Microsoft, AWS, Firebase and the rest.</p>
                 </div>
               </div>

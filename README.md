@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Resend, SendGrid, Amazon SES, Mailgun, Postmark, FCM, APNs, Web Push and Expo push, RCS, Reddit, TikTok, and voice via Twilio, Plivo, Vonage and Exotel. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Dial, Resend, SendGrid, Amazon SES, Mailgun, Postmark, FCM, APNs, Web Push and Expo push, RCS, Reddit, TikTok, and voice via Twilio, Plivo, Vonage and Exotel. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
@@ -169,6 +169,7 @@ Building a chatbot or notification system that works across multiple channels me
 | **Vonage**   | `@msgly/vonage-sms`   | **Global SMS, signed webhooks** |
 | **Plivo**    | `@msgly/plivo`        | **Global SMS + MMS, V3 signature verification** |
 | **Telnyx**   | `@msgly/telnyx`       | **Global SMS + MMS, Ed25519-signed webhooks** |
+| **Dial**     | `@msgly/dial`         | **Agent-provisioned numbers — SMS, MMS + iMessage, HMAC-signed webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
 | **Plivo Voice** | `@msgly/plivo-voice` | **IVR and outbound calls, sharing the Plivo SMS credentials** |
 | **Vonage Voice** | `@msgly/vonage-voice` | **NCCO-driven IVR and outbound calls** |
@@ -203,7 +204,7 @@ Building a chatbot or notification system that works across multiple channels me
 | **Built for outbound** | SES, SMTP, Resend, SendGrid, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, FCM | Fanned out per recipient by `sendBulk`. Honour opt-outs — see below |
 | **Native broadcast** | LINE, WeChat, Viber, Telegram, FCM topics | One API call reaches the whole audience — no fan-out needed |
 | **Feed publishing** | Instagram, Facebook Pages, Reddit, TikTok | `publishPost()` — a post has no recipient, so it sits outside `send()` |
-| **Policy-gated** | WhatsApp | A real campaign channel, but needs approved MARKETING templates and opt-in |
+| **Policy-gated** | WhatsApp, Dial | WhatsApp needs approved MARKETING templates and opt-in; Dial needs 10DLC brand and campaign registration before it can text US numbers |
 | **Reply-only DMs** | Messenger, Instagram DMs | 24h window and message tags only; no DM marketing broadcast |
 | **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person — post to a channel instead |
 

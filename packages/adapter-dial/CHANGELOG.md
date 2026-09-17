@@ -1,5 +1,12 @@
 # @msgly/dial
 
+## 1.9.0
+
+### Patch Changes
+
+- Updated dependencies [90e48f6]
+  - @msgly/core@1.9.0
+
 ## 1.8.0
 
 ### Minor Changes

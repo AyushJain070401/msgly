@@ -1,6 +1,6 @@
 # Msgly
 
-> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Dial, Resend, SendGrid, Amazon SES, Mailgun, Postmark, FCM, APNs, Web Push and Expo push, RCS, Reddit, TikTok, and voice via Twilio, Plivo, Vonage and Exotel. One API, every channel — chat, email, SMS, and phone calls together.
+> Unified messaging library for WhatsApp, Instagram, Messenger, Telegram, LINE, Discord, Microsoft Teams, Gmail, Outlook, SMTP/IMAP (Yahoo, Zoho, Fastmail, any custom mail server), Slack, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Twilio SMS, Exotel, MSG91, Vonage, Plivo, Telnyx, Dial, Genesys Cloud CX, Resend, SendGrid, Amazon SES, Mailgun, Postmark, FCM, APNs, Web Push and Expo push, RCS, Reddit, TikTok, and voice via Twilio, Plivo, Vonage, Exotel and Genesys Cloud CX. One API, every channel — chat, email, SMS, and phone calls together.
 
 [![CI](https://github.com/AyushJain070401/msgly/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushJain070401/msgly/actions)
 [![Pages](https://github.com/AyushJain070401/msgly/actions/workflows/pages.yml/badge.svg)](https://ayushjain070401.github.io/msgly/)
@@ -170,10 +170,12 @@ Building a chatbot or notification system that works across multiple channels me
 | **Plivo**    | `@msgly/plivo`        | **Global SMS + MMS, V3 signature verification** |
 | **Telnyx**   | `@msgly/telnyx`       | **Global SMS + MMS, Ed25519-signed webhooks** |
 | **Dial**     | `@msgly/dial`         | **Agent-provisioned numbers — SMS, MMS + iMessage, HMAC-signed webhooks** |
+| **Genesys SMS** | `@msgly/genesys-sms` | **Genesys Cloud CX contact-center SMS, OAuth2, JSON notification webhooks** |
 | Twilio Voice | `@msgly/twilio-voice` | TwiML, Gather, outbound calls |
 | **Plivo Voice** | `@msgly/plivo-voice` | **IVR and outbound calls, sharing the Plivo SMS credentials** |
 | **Vonage Voice** | `@msgly/vonage-voice` | **NCCO-driven IVR and outbound calls** |
 | **Exotel Voice** | `@msgly/exotel-voice` | **India click-to-call and App Bazaar flow dialling** |
+| **Genesys Voice** | `@msgly/genesys-voice` | **Genesys Cloud CX telephony — Conversations API, no inline IVR markup** |
 
 ### Publishing
 
@@ -206,7 +208,7 @@ Building a chatbot or notification system that works across multiple channels me
 | **Feed publishing** | Instagram, Facebook Pages, Reddit, TikTok | `publishPost()` — a post has no recipient, so it sits outside `send()` |
 | **Policy-gated** | WhatsApp, Dial | WhatsApp needs approved MARKETING templates and opt-in; Dial needs 10DLC brand and campaign registration before it can text US numbers |
 | **Reply-only DMs** | Messenger, Instagram DMs | 24h window and message tags only; no DM marketing broadcast |
-| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat | The recipient is a room, not a person — post to a channel instead |
+| **Not campaign channels** | Slack, Teams, Discord, Mattermost, Rocket.Chat, Google Chat, Genesys SMS, Genesys Voice | The recipient is a room, agent or live call, not a bulk-send target — Genesys adapters are built for agent/queue-driven contact-center interactions |
 
 ### Broadcast: when you don't need fan-out
 

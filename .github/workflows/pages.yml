@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      # The capability matrix is generated from the built adapters, so a
+      # change to an adapter's capabilities changes the site too.
+      - 'packages/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -26,11 +29,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from `packageManager` in package.json — pinning it here
+      # too makes the action fail with ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: site/package-lock.json
+
+      # gen-capabilities.mjs constructs every adapter from its dist/, which is
+      # gitignored and so never present in a fresh checkout. Without this the
+      # script resolves zero adapters and the capability matrix ships empty.
+      # site/ is outside the pnpm workspace, hence the separate install.
+      - name: Build adapter packages
+        working-directory: .
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -r --filter './packages/*' run build
 
       - run: npm ci
 

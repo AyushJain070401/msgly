@@ -43,7 +43,9 @@ export type KnownChannel =
   | 'exotel-voice'
   | 'mailgun'
   | 'postmark'
-  | 'dial';
+  | 'dial'
+  | 'genesys-sms'
+  | 'genesys-voice';
 
 /**
  * A channel identifier. Open by design: `(string & {})` keeps autocomplete for

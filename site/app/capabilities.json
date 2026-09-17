@@ -104,6 +104,36 @@
     "reactions": false,
     "typing": false
   },
+  "@msgly/genesys-sms": {
+    "text": true,
+    "image": false,
+    "video": false,
+    "audio": false,
+    "file": false,
+    "buttons": false,
+    "quickReplies": false,
+    "lists": false,
+    "ctaUrl": false,
+    "cards": false,
+    "templates": false,
+    "reactions": false,
+    "typing": false
+  },
+  "@msgly/genesys-voice": {
+    "text": false,
+    "image": false,
+    "video": false,
+    "audio": false,
+    "file": false,
+    "buttons": false,
+    "quickReplies": false,
+    "lists": false,
+    "ctaUrl": false,
+    "cards": false,
+    "templates": false,
+    "reactions": false,
+    "typing": false
+  },
   "@msgly/gmail": {
     "text": true,
     "image": false,

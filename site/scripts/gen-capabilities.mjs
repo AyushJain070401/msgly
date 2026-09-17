@@ -118,6 +118,26 @@ for (const dir of dirs) {
 console.log = realLog;
 console.warn = realWarn;
 
+// Every adapter is read from its `dist/`, which is gitignored — so a CI job
+// that builds the site without first building the packages resolves nothing.
+// Writing that result would replace a good table with `{}` and ship a site
+// whose capability matrix renders zero rows, which is how this shipped broken
+// to GitHub Pages once already. An empty result is a build failure, not a
+// table, so leave the committed file alone and say what to run.
+if (Object.keys(out).length === 0) {
+  console.error(
+    'capabilities: resolved 0 adapters — every package is missing dist/.\n' +
+      'Build the packages before generating the table: `pnpm -r run build` ' +
+      'from the repo root, then re-run this script.\n' +
+      `Left ${outFile} untouched.`,
+  );
+  if (skipped.length) {
+    console.error('skipped:');
+    for (const [d, why] of skipped) console.error(`  ${d} — ${why}`);
+  }
+  process.exit(1);
+}
+
 writeFileSync(outFile, `${JSON.stringify(out, null, 2)}\n`);
 
 console.log(

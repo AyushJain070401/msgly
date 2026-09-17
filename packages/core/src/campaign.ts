@@ -110,6 +110,15 @@ export const CHANNEL_RATE_LIMITS: Record<KnownChannel, RateLimit> = {
   // override per call when you have one.
   'twilio-sms': { perSecond: 1, burst: 1 },
   'twilio-voice': { perSecond: 1, burst: 1 },
+  // Genesys Cloud's public API platform limit is ~300 requests/min per org
+  // for messaging endpoints (docs vary by product edition) — well under 5/s.
+  // Conservative default, comparable to Twilio SMS's long-code ceiling, since
+  // the notification-based inbound path does the real fan-out anyway.
+  'genesys-sms': { perSecond: 3, burst: 5 },
+  // A call occupies an agent/line for its duration, so throughput is bounded
+  // by concurrent conversations rather than requests per second — mirrors the
+  // other voice adapters' conservative default.
+  'genesys-voice': { perSecond: 2, burst: 4 },
 };
 
 const FALLBACK_RATE_LIMIT: RateLimit = { perSecond: 5, burst: 5 };

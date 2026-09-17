@@ -37,6 +37,7 @@ export const channels: Channel[] = [
   { name: 'Plivo', pkg: '@msgly/plivo', category: 'SMS & voice', notes: 'Global SMS and MMS with V3 signature verification', campaign: 'Outbound' },
   { name: 'Telnyx', pkg: '@msgly/telnyx', category: 'SMS & voice', notes: 'Global SMS and MMS, Ed25519-signed webhooks', campaign: 'Outbound' },
   { name: 'Dial', pkg: '@msgly/dial', category: 'SMS & voice', notes: 'Agent-provisioned numbers — SMS, MMS and iMessage with HMAC-signed webhooks', campaign: 'Policy-gated' },
+  { name: 'Genesys SMS', pkg: '@msgly/genesys-sms', category: 'SMS & voice', notes: 'Genesys Cloud CX contact-center SMS, OAuth2 client-credentials, JSON notification webhooks', campaign: 'Not for campaigns' },
   { name: 'Twilio Voice', pkg: '@msgly/twilio-voice', category: 'SMS & voice', notes: 'TwiML flows, Gather input and outbound calls', campaign: '—' },
 
   { name: 'Reddit', pkg: '@msgly/reddit', category: 'Publishing', notes: 'Subreddit posts, thread replies and inbox polling', campaign: 'Broadcast' },
@@ -50,6 +51,7 @@ export const channels: Channel[] = [
   { name: 'Plivo Voice', pkg: '@msgly/plivo-voice', category: 'SMS & voice', notes: 'IVR and outbound calls, sharing the Plivo SMS credentials', campaign: 'Not for campaigns' },
   { name: 'Vonage Voice', pkg: '@msgly/vonage-voice', category: 'SMS & voice', notes: 'NCCO-driven IVR and outbound calls', campaign: 'Not for campaigns' },
   { name: 'Exotel Voice', pkg: '@msgly/exotel-voice', category: 'SMS & voice', notes: 'India click-to-call and App Bazaar flow dialling', campaign: 'Not for campaigns' },
+  { name: 'Genesys Voice', pkg: '@msgly/genesys-voice', category: 'SMS & voice', notes: 'Genesys Cloud CX telephony via the Conversations API — no inline IVR markup', campaign: 'Not for campaigns' },
 
   { name: 'Core', pkg: '@msgly/core', category: 'Core', notes: 'Hub, adapter contract, retries, storage, campaigns', campaign: '—' },
 ];

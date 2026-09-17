@@ -3,7 +3,7 @@
     "version": "1.8.0",
     "date": null,
     "pending": true,
-    "packageCount": 12,
+    "packageCount": 14,
     "notes": [
       {
         "kind": "Minor",
@@ -33,6 +33,16 @@
           "@msgly/core",
           "@msgly/expo-push",
           "@msgly/rcs-twilio"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Add @msgly/genesys-sms and @msgly/genesys-voice — Genesys Cloud CX contact-center messaging and telephony, as a channel-split pair mirroring @msgly/twilio-sms/@msgly/twilio-voice.",
+        "body": "Add `@msgly/genesys-sms` and `@msgly/genesys-voice` — Genesys Cloud CX\ncontact-center messaging and telephony, as a channel-split pair mirroring\n`@msgly/twilio-sms`/`@msgly/twilio-voice`.\n\n**Auth is OAuth2, not Basic Auth.** Every SMS/voice adapter shipped so far\nauthenticates with a static credential pair sent on every request. Genesys\nCloud instead uses OAuth2 client-credentials: `clientId`/`clientSecret` are\nexchanged for a bearer token (`POST https://login.{region}/oauth/token`),\ncached, and refreshed from the response's `expires_in` before it lapses. Both\nadapters share this token-cache logic, duplicated rather than factored into a\nshared package — two small adapters didn't justify a new internal dependency,\nand the duplication is a handful of lines. `region` also picks the API host\n(`api.{region}`) — Genesys Cloud is region-sharded, and there is no single\nglobal endpoint the way Twilio has one.\n\n**Inbound is JSON notifications, not a single synchronous webhook.** Twilio's\nform-encoded POST-per-event model doesn't hold for Genesys Cloud: inbound SMS,\ncall events, and status changes all arrive through the Notifications API,\nusually relayed to an HTTP endpoint by a configured webhook integration as a\nJSON body (either a bare event or wrapped `{ topicName, eventBody }`).\n`handleWebhook` on both adapters parses that JSON shape rather than Twilio's\n`application/x-www-form-urlencoded` body — the biggest structural divergence\nfrom the Twilio template both were built from.\n\n**Signature verification is a documented assumption, not a fact.** Genesys\nCloud publishes no single universal webhook-signing header the way Twilio\ndocuments `X-Twilio-Signature`. Both adapters verify HMAC-SHA256 over the raw\nbody against a configurable `webhookSecret` and header name, and — like\n`@msgly/twilio-voice` — reject unverifiable webhooks by default, with an\nexplicit `allowUnverifiedWebhooks` escape hatch for callers who authenticate\nrequests some other way. Confirm the header/algorithm against your own\nwebhook integration before depending on it.\n\n**`@msgly/genesys-voice` does not invent a fake TwiML.** Twilio Voice can\nbuild a full IVR inline because TwiML is a documented markup language the\nwebhook response returns. Genesys Cloud has no equivalent — flows are authored\nexternally in Genesys Architect. Rather than fabricate a DSL, `send()` refuses\ntext content outright with an error pointing callers at Architect, and audio\nplayback into a live call — which is *not* a confidently-known single\nConversations API endpoint — returns an explicit\n`genesys_voice_play_not_implemented` failure instead of guessing at a path.\n\nBecause of that, every capability flag on this adapter is `false`, including\n`media.audio`. The hub gates `send()` on those flags, so advertising audio\nwould wave a send through only to fail at runtime, instead of failing fast\nwith `UnsupportedFeature` — the exact class of dishonest-capability bug the\ngenerated capability matrix exists to catch. `@msgly/genesys-voice` is\ntherefore an inbound-plus-call-control adapter: `handleWebhook()`,\n`initiateCall()`, `endCall()` and `parseStatuses()` all sit outside `send()`.\n`initiateCall`/`endCall` do call a documented-shape endpoint\n(`POST /api/v2/conversations/calls`, `.../disconnect`), but both are flagged\nin code comments to verify against current Genesys Cloud API docs before\nproduction use — this was written from platform knowledge, not fetched docs.\n\n**`@msgly/genesys-sms` stays narrow on purpose.** Text only; no MMS-equivalent\nattachments (the content-management API shape for that isn't modeled), no\ntemplates, no reactions, no typing. Honest, conservative capabilities over\nguessed-at ones.\n\n`@msgly/core` registers `genesys-sms` and `genesys-voice` in `KnownChannel`\nand gives both a conservative `CHANNEL_RATE_LIMITS` default — `3/s` for SMS\n(Genesys Cloud's documented messaging-endpoint ceiling is roughly 300\nrequests/min per org) and `2/s` for voice (bounded by concurrent\nconversations, same reasoning as the other voice adapters).",
+        "packages": [
+          "@msgly/core",
+          "@msgly/genesys-sms",
+          "@msgly/genesys-voice"
         ]
       },
       {

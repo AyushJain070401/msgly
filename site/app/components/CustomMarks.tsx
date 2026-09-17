@@ -181,6 +181,26 @@ export const customMarks: Record<string, { hex: string; node: ReactElement }> = 
     ),
   },
 
+  // Genesys is not in simple-icons and its own mark is a trademarked figure.
+  // A "G" in the brand's orange reads as Genesys in a channel list without
+  // passing itself off as their logo — the same call made for Postmark below.
+  '@msgly/genesys-sms': {
+    hex: '#FF4F1F',
+    node: (
+      <g>
+        <rect x="1" y="1" width="22" height="22" rx="5" fill="#FF4F1F" />
+        <path
+          d="M16.21 8.94A5.2 5.2 0 1 0 17.2 12H12.8"
+          fill="none"
+          stroke="#fff"
+          strokeWidth="2.1"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
+    ),
+  },
+
   '@msgly/telnyx': {
     hex: '#00E3AA',
     node: (

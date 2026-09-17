@@ -1,6 +1,6 @@
 {
   "name": "@msgly/expo-push",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Expo push notifications adapter for Msgly",
   "license": "MIT",
   "type": "module",

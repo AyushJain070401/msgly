@@ -1,5 +1,21 @@
 # express-basic
 
+## 0.1.12
+
+### Patch Changes
+
+- Updated dependencies [90e48f6]
+  - @msgly/core@1.9.0
+  - @msgly/discord@1.9.0
+  - @msgly/gmail@1.9.0
+  - @msgly/instagram@1.9.0
+  - @msgly/line@1.9.0
+  - @msgly/messenger@1.9.0
+  - @msgly/msteams@1.9.0
+  - @msgly/outlook@1.9.0
+  - @msgly/telegram@1.9.0
+  - @msgly/whatsapp@1.9.0
+
 ## 0.1.11
 
 ### Patch Changes

@@ -122,6 +122,27 @@ Twilio places roughly **1 call/second** per number by default, which is the
 campaign default here. Calls also cost real money per attempt — be deliberate
 about `sendBulk` on this channel, and check local rules on automated calling.
 
+## Checking the number
+
+`verifyCredentials()` validates the phone number as well as the key and secret,
+so a wrong number is caught where it was typed rather than on the first call.
+The number check is also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+It first checks the number is valid E.164 — naming the actual mistake, such as
+a missing `+` or leftover dashes — then asks Twilio whether the number is on
+this account, which also catches a valid number belonging to a *different*
+Twilio account.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters: a restricted API key that cannot list numbers can't answer the
+ownership question, so the check reports `ok: true` with `inconclusive` rather
+than calling a working number invalid. Only `not_owned` and `malformed` fail.
+
 ## License
 
 MIT

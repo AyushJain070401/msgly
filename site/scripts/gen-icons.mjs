@@ -50,6 +50,7 @@ const FROM_SIMPLE_ICONS = {
 const ALIASES = {
   '@msgly/plivo-voice': '@msgly/plivo',
   '@msgly/exotel-voice': '@msgly/exotel',
+  '@msgly/genesys-voice': '@msgly/genesys-sms',
 };
 
 const slugToExport = (s) => 'si' + s[0].toUpperCase() + s.slice(1);

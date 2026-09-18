@@ -10,6 +10,7 @@ import type {
   MediaReference,
   MessageContent,
   OutboundMessage,
+  PhoneNumberCheckResult,
   RateLimit,
   WebhookRequest,
 } from '@msgly/core';
@@ -52,6 +53,19 @@ export interface DialConfig {
 
 export interface DialAdapter extends Adapter {
   readonly channel: 'dial';
+  /**
+   * Check that `config.fromNumber` names one of the account's numbers,
+   * without sending anything.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for
+   * free. It is exposed separately for the case where the number is changed
+   * on an account that is already connected.
+   *
+   * Unlike the Twilio and Genesys adapters there is no E.164 format gate
+   * here: `fromNumber` is allowed to be an id or a nickname, so the account's
+   * number list is the only thing that can answer the question.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
   /**
    * Turn a `message.status_changed` webhook into delivery receipts.
    *
@@ -284,6 +298,62 @@ interface DialEventEnvelope {
 }
 
 /**
+ * Locate the array of numbers in a list response.
+ *
+ * Dial's public REST reference does not document this endpoint's envelope (see
+ * the adapter README), so rather than betting on one key, this accepts a bare
+ * array and the plausible wrappers. `phoneNumbers` is the shape this package's
+ * own fixtures have used since the adapter landed, so it is checked first.
+ *
+ * Returns null when none of them match, which callers report as inconclusive —
+ * guessing wrong must not turn into "your number is invalid".
+ */
+function findNumberList(body: unknown): unknown[] | null {
+  if (Array.isArray(body)) return body;
+  if (!body || typeof body !== 'object') return null;
+  const obj = body as Record<string, unknown>;
+  for (const key of ['phoneNumbers', 'phone_numbers', 'data', 'numbers', 'entities']) {
+    const value = obj[key];
+    if (Array.isArray(value)) return value;
+  }
+  return null;
+}
+
+/**
+ * Check `fromNumber` against the account's number list.
+ *
+ * `fromNumber` may be a phone-number id, an E.164 number, or a nickname, so a
+ * plain equality test on one field would reject two of the three valid forms.
+ * Returns `found: null` when the payload isn't the expected shape — an
+ * unrecognised response must not be read as "the number is wrong".
+ */
+export function matchDialFromNumber(
+  body: unknown,
+  fromNumber: string,
+): { found: true } | { found: false; known: string[] } | { found: null } {
+  const list = findNumberList(body);
+  if (!list) return { found: null };
+
+  const wanted = fromNumber.trim().toLowerCase();
+  const known: string[] = [];
+  let found = false;
+
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    const fields = [e['id'], e['phone_number'], e['phoneNumber'], e['number'], e['nickname'], e['name']];
+    for (const field of fields) {
+      if (typeof field !== 'string' || field === '') continue;
+      if (field.trim().toLowerCase() === wanted) found = true;
+    }
+    const label = e['phone_number'] ?? e['phoneNumber'] ?? e['number'] ?? e['nickname'] ?? e['name'];
+    if (typeof label === 'string' && label !== '') known.push(label);
+  }
+
+  return found ? { found: true } : { found: false, known };
+}
+
+/**
  * Dial adapter for Msgly.
  *
  * **Send.** `POST /api/v1/messages` with a Bearer key.
@@ -296,6 +366,7 @@ interface DialEventEnvelope {
  * would pull `pubnub` and `zod` into a package that otherwise needs nothing but
  * `@msgly/core`.
  */
+
 export function createDialAdapter(config: DialConfig): DialAdapter {
   const apiBase = config.apiBase ?? DEFAULT_API_BASE;
   const toleranceSec = config.webhookToleranceSec ?? DEFAULT_TOLERANCE_SEC;
@@ -570,6 +641,89 @@ export function createDialAdapter(config: DialConfig): DialAdapter {
     if (!res.ok) throw new Error(`Dial sendTyping failed: HTTP ${res.status}`);
   }
 
+  async function fetchNumbers(): Promise<
+    | { ok: true; body: unknown }
+    | { ok: false; reason: string; kind: 'unauthorized' | 'http' | 'network' }
+  > {
+    try {
+      const res = await fetch(`${apiBase}/api/v1/phone-numbers`, {
+        headers: authHeaders(),
+      });
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, reason: 'Dial rejected the API key', kind: 'unauthorized' };
+      }
+      if (!res.ok) {
+        return { ok: false, reason: `Dial returned HTTP ${res.status}`, kind: 'http' };
+      }
+      return { ok: true, body: await res.json().catch(() => null) };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: err instanceof Error ? err.message : String(err),
+        kind: 'network',
+      };
+    }
+  }
+
+  /** The empty/missing case, shared by both entry points. */
+  function missingFromNumber(): PhoneNumberCheckResult | null {
+    if (config.fromNumber && config.fromNumber.trim() !== '') return null;
+    return {
+      ok: false,
+      status: 'malformed',
+      phoneNumber: config.fromNumber,
+      hint: 'DialConfig.fromNumber is missing — give a phone-number id, one of your numbers in E.164, or its nickname.',
+    };
+  }
+
+  /**
+   * Judge `fromNumber` against a number list already in hand. Pure, so
+   * `verifyCredentials` can reuse the list it just fetched rather than
+   * issuing a second identical request.
+   */
+  function evaluateFromNumber(body: unknown): PhoneNumberCheckResult {
+    const match = matchDialFromNumber(body, config.fromNumber);
+    if (match.found === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.fromNumber };
+    }
+    if (match.found === null) {
+      return {
+        ok: true,
+        status: 'inconclusive',
+        phoneNumber: config.fromNumber,
+        hint: `"${config.fromNumber}" could not be confirmed — Dial's number list was not in the expected shape.`,
+      };
+    }
+    return {
+      ok: false,
+      status: 'not_owned',
+      phoneNumber: config.fromNumber,
+      hint: `DialConfig.fromNumber "${config.fromNumber}" is not one of your Dial numbers${
+        match.known.length > 0
+          ? ` (available: ${match.known.slice(0, 5).join(', ')}${
+              match.known.length > 5 ? `, and ${match.known.length - 5} more` : ''
+            })`
+          : ''
+      }. Check it in the Dial dashboard.`,
+    };
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const missing = missingFromNumber();
+    if (missing) return missing;
+
+    const numbers = await fetchNumbers();
+    if (!numbers.ok) {
+      return {
+        ok: true,
+        status: 'inconclusive',
+        phoneNumber: config.fromNumber,
+        hint: `"${config.fromNumber}" could not be confirmed against the account: ${numbers.reason}.`,
+      };
+    }
+    return evaluateFromNumber(numbers.body);
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.apiKey) {
       return {
@@ -579,30 +733,46 @@ export function createDialAdapter(config: DialConfig): DialAdapter {
       };
     }
 
-    try {
-      const res = await fetch(`${apiBase}/api/v1/phone-numbers`, {
-        headers: authHeaders(),
-      });
+    const missing = missingFromNumber();
+    if (missing) {
+      return {
+        ok: false,
+        reason: 'unauthorized',
+        hint: missing.hint ?? 'DialConfig.fromNumber is missing.',
+      };
+    }
 
-      if (res.status === 401 || res.status === 403) {
+    // The number list doubles as the credential check: it needs a valid key,
+    // and it is the same response verifyPhoneNumber reads. Evaluating it here
+    // rather than calling verifyPhoneNumber() keeps this to one request.
+    const numbers = await fetchNumbers();
+    if (!numbers.ok) {
+      if (numbers.kind === 'unauthorized') {
         return {
           ok: false,
           reason: 'unauthorized',
           hint: 'Dial rejected the API key. Regenerate it in the dashboard.',
         };
       }
-      if (!res.ok) {
-        return { ok: false, reason: 'unknown', hint: `Dial returned HTTP ${res.status}.` };
+      if (numbers.kind === 'network') {
+        return { ok: false, reason: 'network_error', hint: numbers.reason };
       }
+      return { ok: false, reason: 'unknown', hint: `${numbers.reason}.` };
+    }
 
-      return { ok: true, accountInfo: `Dial (from: ${config.fromNumber})` };
-    } catch (err) {
+    const numberCheck = evaluateFromNumber(numbers.body);
+    if (!numberCheck.ok) {
       return {
         ok: false,
-        reason: 'network_error',
-        hint: err instanceof Error ? err.message : String(err),
+        reason: 'unauthorized',
+        hint: numberCheck.hint ?? `The configured number is not usable (${numberCheck.status}).`,
       };
     }
+
+    return {
+      ok: true,
+      accountInfo: `Dial (from: ${config.fromNumber})`,
+    };
   }
 
   async function uploadMedia(_file: MediaFile): Promise<MediaReference> {
@@ -632,6 +802,7 @@ export function createDialAdapter(config: DialConfig): DialAdapter {
     parseStatuses,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     sendReaction,
     sendTyping,
     uploadMedia,

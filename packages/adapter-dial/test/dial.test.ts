@@ -456,7 +456,9 @@ describe('reactions and typing', () => {
 
 describe('verifyCredentials', () => {
   it('succeeds on a healthy key', async () => {
-    mockApi({ phoneNumbers: [] }, 200);
+    // The number list now has to contain fromNumber: verifyCredentials checks
+    // the number as well as the key, so an empty list means "wrong number".
+    mockApi({ phoneNumbers: [{ id: 'pn_1', phone_number: '+15550001111' }] }, 200);
     const a = createDialAdapter(baseConfig);
 
     expect(await a.verifyCredentials()).toEqual({
@@ -662,5 +664,107 @@ describe('edge cases', () => {
     await expect(
       a.downloadMedia({ kind: 'url', value: 'https://cdn.test/missing' }),
     ).rejects.toThrow(/HTTP 404/);
+  });
+});
+
+describe('verifyPhoneNumber', () => {
+  it('matches fromNumber by E.164', async () => {
+    mockApi({ data: [{ id: 'pn_1', phone_number: '+15550001111' }] }, 200);
+    const a = createDialAdapter(baseConfig);
+
+    expect(await a.verifyPhoneNumber()).toEqual({
+      ok: true,
+      status: 'owned',
+      phoneNumber: '+15550001111',
+    });
+  });
+
+  it('matches fromNumber by id and by nickname', async () => {
+    mockApi({ data: [{ id: 'pn_1', phone_number: '+15550001111', nickname: 'Support' }] }, 200);
+
+    const byId = createDialAdapter({ ...baseConfig, fromNumber: 'pn_1' });
+    expect(await byId.verifyPhoneNumber()).toMatchObject({ status: 'owned' });
+
+    mockApi({ data: [{ id: 'pn_1', phone_number: '+15550001111', nickname: 'Support' }] }, 200);
+    const byNick = createDialAdapter({ ...baseConfig, fromNumber: 'Support' });
+    expect(await byNick.verifyPhoneNumber()).toMatchObject({ status: 'owned' });
+  });
+
+  it('rejects a fromNumber the account does not have, and lists what it does', async () => {
+    mockApi({ data: [{ id: 'pn_9', phone_number: '+15559998888' }] }, 200);
+    const a = createDialAdapter(baseConfig);
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: false, status: 'not_owned' });
+    expect(res.hint).toContain('+15559998888');
+  });
+
+  it('treats an unrecognised list shape as inconclusive, not as a wrong number', async () => {
+    mockApi({ unexpected: 'shape' }, 200);
+    const a = createDialAdapter(baseConfig);
+
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'inconclusive' });
+  });
+});
+
+describe('verifyCredentials number check', () => {
+  it('checks the key and the number in a single request', async () => {
+    const calls = mockApi({ data: [{ id: 'pn_1', phone_number: '+15550001111' }] }, 200);
+    const a = createDialAdapter(baseConfig);
+
+    expect(await a.verifyCredentials()).toEqual({
+      ok: true,
+      accountInfo: 'Dial (from: +15550001111)',
+    });
+    // The number list answers both questions — fetching it twice would be a
+    // wasted round trip on every credential check.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('fails with the wrong-number hint when the key is fine but the number is not', async () => {
+    mockApi({ data: [{ id: 'pn_9', phone_number: '+15559998888' }] }, 200);
+    const a = createDialAdapter(baseConfig);
+    const res = await a.verifyCredentials();
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe('unauthorized');
+      expect(res.hint).toContain('not one of your Dial numbers');
+    }
+  });
+
+  it('rejects an empty fromNumber before calling the API', async () => {
+    const calls = mockApi({ data: [] }, 200);
+    const a = createDialAdapter({ ...baseConfig, fromNumber: '   ' });
+
+    expect(await a.verifyCredentials()).toMatchObject({ ok: false, reason: 'unauthorized' });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('number list envelope', () => {
+  // Dial's REST reference does not document this envelope, so the matcher
+  // accepts the plausible ones rather than betting on a single key.
+  for (const key of ['phoneNumbers', 'phone_numbers', 'data', 'numbers', 'entities']) {
+    it(`finds the number under "${key}"`, async () => {
+      mockApi({ [key]: [{ id: 'pn_1', phone_number: '+15550001111' }] }, 200);
+      const a = createDialAdapter(baseConfig);
+
+      expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'owned' });
+    });
+  }
+
+  it('finds the number in a bare array response', async () => {
+    mockApi([{ id: 'pn_1', phone_number: '+15550001111' }], 200);
+    const a = createDialAdapter(baseConfig);
+
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('reports not_owned only when a recognised list really lacks the number', async () => {
+    mockApi({ phoneNumbers: [{ phone_number: '+15559998888' }] }, 200);
+    const a = createDialAdapter(baseConfig);
+
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: false, status: 'not_owned' });
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createTwilioVoiceAdapter, twiml } from '../src/index.js';
 
@@ -524,5 +524,80 @@ describe('interactive → <Gather> (documented but previously unimplemented)', (
     });
     const ack = a.getInteractionAck!(callReq()) as { body: string };
     expect(ack.body).toContain('<Gather input="dtmf" numDigits="1">');
+  });
+});
+
+describe('verifyPhoneNumber', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function mockTwilio(handler: (url: string) => Response) {
+    globalThis.fetch = (async (url: string) => handler(String(url))) as unknown as typeof fetch;
+  }
+
+  it('rejects a malformed number without calling the API', async () => {
+    const calls: string[] = [];
+    mockTwilio((url) => {
+      calls.push(url);
+      return new Response('{}', { status: 200 });
+    });
+
+    const a = createTwilioVoiceAdapter({ ...config, phoneNumber: '(555) 123-4567' });
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: false, status: 'malformed' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('confirms a number the account owns', async () => {
+    mockTwilio((url) =>
+      url.includes('IncomingPhoneNumbers.json')
+        ? new Response(
+            JSON.stringify({ incoming_phone_numbers: [{ phone_number: '+15551234567' }] }),
+            { status: 200 },
+          )
+        : new Response('{}', { status: 200 }),
+    );
+
+    const a = createTwilioVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('rejects a number belonging to another account', async () => {
+    mockTwilio((url) =>
+      url.includes('IncomingPhoneNumbers.json')
+        ? new Response(JSON.stringify({ incoming_phone_numbers: [] }), { status: 200 })
+        : new Response('{}', { status: 200 }),
+    );
+
+    const a = createTwilioVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: false, status: 'not_owned' });
+  });
+
+  it('stays ok when a restricted key cannot list numbers', async () => {
+    mockTwilio((url) =>
+      url.includes('IncomingPhoneNumbers.json')
+        ? new Response('{}', { status: 403 })
+        : new Response('{}', { status: 200 }),
+    );
+
+    const a = createTwilioVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'inconclusive' });
+  });
+
+  it('fails verifyCredentials when the number is not on the account', async () => {
+    mockTwilio((url) =>
+      url.includes('IncomingPhoneNumbers.json')
+        ? new Response(JSON.stringify({ incoming_phone_numbers: [] }), { status: 200 })
+        : new Response(JSON.stringify({ friendly_name: 'Acme' }), { status: 200 }),
+    );
+
+    const a = createTwilioVoiceAdapter(config);
+    const res = await a.verifyCredentials();
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.hint).toContain('+15551234567');
   });
 });

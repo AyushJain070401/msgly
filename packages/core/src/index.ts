@@ -6,3 +6,4 @@ export * from './retry.js';
 export * from './campaign.js';
 export * from './suppression.js';
 export * from './hub.js';
+export * from './phone.js';

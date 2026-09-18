@@ -296,3 +296,97 @@ describe('createGenesysVoiceAdapter', () => {
     if (!result.ok) expect(result.hint).toContain('phoneNumber');
   });
 });
+
+describe('verifyPhoneNumber', () => {
+  it('rejects a malformed number without calling the API', async () => {
+    const seen: string[] = [];
+    globalThis.fetch = mockTokenFetch((url) => {
+      seen.push(url);
+      return null;
+    });
+
+    const a = createGenesysVoiceAdapter({ ...config, phoneNumber: '5551234567' });
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: false, status: 'malformed' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('confirms a DID assigned to the org', async () => {
+    let lookupUrl = '';
+    globalThis.fetch = mockTokenFetch((url) => {
+      if (url.includes('/telephony/providers/edges/dids')) {
+        lookupUrl = url;
+        return new Response(JSON.stringify({ entities: [{ phoneNumber: '+15551234567' }] }), {
+          status: 200,
+        });
+      }
+      return null;
+    });
+
+    const a = createGenesysVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toEqual({
+      ok: true,
+      status: 'owned',
+      phoneNumber: '+15551234567',
+    });
+    // Voice looks at DIDs, not the SMS inventory its sibling uses.
+    expect(lookupUrl).toContain('/api/v2/telephony/providers/edges/dids');
+  });
+
+  it('matches a DID reported under "number" rather than "phoneNumber"', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/telephony/providers/edges/dids')
+        ? new Response(JSON.stringify({ entities: [{ number: '+15551234567' }] }), { status: 200 })
+        : null,
+    );
+
+    const a = createGenesysVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('rejects a DID the org does not hold', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/telephony/providers/edges/dids')
+        ? new Response(JSON.stringify({ entities: [{ phoneNumber: '+15559999999' }] }), {
+            status: 200,
+          })
+        : null,
+    );
+
+    const a = createGenesysVoiceAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: false, status: 'not_owned' });
+  });
+
+  it('stays ok when the OAuth client cannot list DIDs', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/telephony/providers/edges/dids')
+        ? new Response('{}', { status: 403 })
+        : null,
+    );
+
+    const a = createGenesysVoiceAdapter(config);
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(res.hint).toContain('not permitted');
+  });
+
+  it('fails verifyCredentials when the DID is not on the org', async () => {
+    globalThis.fetch = mockTokenFetch((url) => {
+      if (url.includes('/telephony/providers/edges/dids')) {
+        return new Response(JSON.stringify({ entities: [] }), { status: 200 });
+      }
+      if (url.includes('/users/me')) {
+        return new Response(JSON.stringify({ name: 'Acme Org' }), { status: 200 });
+      }
+      return null;
+    });
+
+    const a = createGenesysVoiceAdapter(config);
+    const res = await a.verifyCredentials();
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.hint).toContain('+15551234567');
+  });
+});

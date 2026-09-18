@@ -281,3 +281,63 @@ describe('createGenesysSmsAdapter', () => {
     if (!result.ok) expect(result.hint).toContain('region');
   });
 });
+
+describe('verifyPhoneNumber', () => {
+  it('rejects a malformed number without calling the API', async () => {
+    const seen: string[] = [];
+    globalThis.fetch = mockTokenFetch((url) => {
+      seen.push(url);
+      return null;
+    });
+
+    const a = createGenesysSmsAdapter({ ...config, phoneNumber: '5551234567' });
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: false, status: 'malformed' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('confirms a number held by the org', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/routing/sms/phonenumbers')
+        ? new Response(JSON.stringify({ entities: [{ phoneNumber: '+15551234567' }] }), {
+            status: 200,
+          })
+        : null,
+    );
+
+    const a = createGenesysSmsAdapter(config);
+    expect(await a.verifyPhoneNumber()).toEqual({
+      ok: true,
+      status: 'owned',
+      phoneNumber: '+15551234567',
+    });
+  });
+
+  it('rejects a number the org does not hold', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/routing/sms/phonenumbers')
+        ? new Response(JSON.stringify({ entities: [{ phoneNumber: '+15559999999' }] }), {
+            status: 200,
+          })
+        : null,
+    );
+
+    const a = createGenesysSmsAdapter(config);
+    expect(await a.verifyPhoneNumber()).toMatchObject({ ok: false, status: 'not_owned' });
+  });
+
+  it('stays ok when the OAuth client cannot list numbers', async () => {
+    globalThis.fetch = mockTokenFetch((url) =>
+      url.includes('/routing/sms/phonenumbers')
+        ? new Response('{}', { status: 403 })
+        : null,
+    );
+
+    const a = createGenesysSmsAdapter(config);
+    const res = await a.verifyPhoneNumber();
+
+    expect(res).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(res.hint).toContain('not permitted');
+  });
+});

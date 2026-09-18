@@ -101,6 +101,30 @@ Reaction **removal** is not implemented: other channels use an empty string to
 mean "remove", and Dial documents no equivalent, so `sendReaction` rejects an
 empty emoji rather than silently sending one.
 
+## Checking the number
+
+`verifyCredentials()` validates `fromNumber` as well as the API key, so a wrong
+number is caught where it was typed rather than on the first send. It costs no
+extra request — the number list *is* the credential check. The number check is
+also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: 'Support', hint: '…' }
+```
+
+There is no E.164 format gate here, unlike the Twilio and Genesys adapters:
+`fromNumber` may be a phone-number id, an E.164 number, or a nickname, so a
+format check would reject two of the three valid forms. The account's own
+number list is the only thing that can answer the question, and any of the
+three forms matches.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. As with the
+endpoint paths above, this response's envelope is not documented — the matcher
+accepts a bare array plus the plausible wrappers, and reports `inconclusive`
+(not `not_owned`) when it recognises none of them, so an unexpected shape never
+reads as "your number is wrong".
+
 ## License
 
 MIT

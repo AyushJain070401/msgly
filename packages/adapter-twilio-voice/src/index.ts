@@ -8,8 +8,10 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
+import { describeE164Problem } from '@msgly/core';
 
 export interface TwilioVoiceConfig {
   /** Twilio Account SID (starts with `AC`). */
@@ -72,6 +74,17 @@ export interface TwilioVoiceConfig {
 
 export interface TwilioVoiceAdapter extends Adapter {
   readonly channel: 'twilio-voice';
+  /**
+   * Check that `config.phoneNumber` is well-formed and actually usable on
+   * this account, without sending anything.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for
+   * free. It is exposed separately for the case where the number is entered
+   * on its own — changing the sending number on an account that is already
+   * connected — and for surfacing the number's status in a UI apart from
+   * the credential status.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
   /**
    * Initiate an outbound phone call. The callee hears the TwiML generated
    * from `twiml` (raw TwiML string) or from the `url` callback.
@@ -663,6 +676,81 @@ export function createTwilioVoiceAdapter(
     ];
   }
 
+  /**
+   * Ask Twilio whether `config.phoneNumber` is one of the account's own
+   * incoming numbers.
+   *
+   * Returns `owned: null` when the question couldn't be answered — the lookup
+   * failed, or the key is restricted and can't list numbers. Callers treat
+   * that as inconclusive rather than invalid, so a missing permission doesn't
+   * make working credentials look broken.
+   */
+  async function checkNumberOwnership(): Promise<
+    { owned: true } | { owned: false } | { owned: null; reason: string }
+  > {
+    try {
+      // Twilio treats `PhoneNumber` as a partial match, so the page can come
+      // back holding numbers other than the one asked for. Ask for a full page
+      // rather than one row and match exactly below — a single-row page could
+      // return a different partial match and read as "not owned".
+      const url = `${apiBase}/2010-04-01/Accounts/${encodeURIComponent(
+        config.accountSid,
+      )}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(config.phoneNumber)}&PageSize=50`;
+      const res = await fetch(url, {
+        headers: { authorization: `Basic ${basicAuth()}` },
+      });
+      if (!res.ok) {
+        return { owned: null, reason: `number lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json()) as {
+        incoming_phone_numbers?: Array<{ phone_number?: string }>;
+      };
+      const list = body.incoming_phone_numbers;
+      if (!Array.isArray(list)) {
+        return { owned: null, reason: 'unexpected number lookup response' };
+      }
+      return list.some((n) => n.phone_number === config.phoneNumber)
+        ? { owned: true }
+        : { owned: false };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const problem = describeE164Problem(config.phoneNumber);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.phoneNumber,
+        hint: `TwilioVoiceConfig.phoneNumber ${problem}.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.phoneNumber };
+    }
+    if (ownership.owned === false) {
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.phoneNumber,
+        hint: `${config.phoneNumber} is not a number on this Twilio account. Check it under console.twilio.com → Phone Numbers → Manage → Active numbers.`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.phoneNumber,
+      hint: `${config.phoneNumber} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.accountSid || !config.accountSid.startsWith('AC')) {
       return {
@@ -678,11 +766,14 @@ export function createTwilioVoiceAdapter(
         hint: 'TwilioVoiceConfig.authToken missing. Find it at console.twilio.com → Account Info → Auth Token.',
       };
     }
-    if (!config.phoneNumber) {
+    // verifyPhoneNumber() gates on the format too, but running it here first
+    // means a malformed number fails before any network call is made.
+    const phoneProblem = describeE164Problem(config.phoneNumber);
+    if (phoneProblem) {
       return {
         ok: false,
         reason: 'unauthorized',
-        hint: 'TwilioVoiceConfig.phoneNumber missing. Use E.164 format, e.g. +15551234567.',
+        hint: `TwilioVoiceConfig.phoneNumber ${phoneProblem}.`,
       };
     }
 
@@ -711,9 +802,23 @@ export function createTwilioVoiceAdapter(
         friendly_name?: string;
         status?: string;
       };
+      const accountName = data.friendly_name ?? config.accountSid;
+
+      // The credentials are good; now confirm the number is actually on this
+      // account. A well-formed number that belongs to a different Twilio
+      // account passes the format gate but fails every send, so catching it
+      // here is the whole point of checking at setup time.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint: numberCheck.hint ?? `The configured number is not usable (${numberCheck.status}).`,
+        };
+      }
       return {
         ok: true,
-        accountInfo: `${data.friendly_name ?? config.accountSid} (${config.phoneNumber})`,
+        accountInfo: `${accountName} (${config.phoneNumber})`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -752,6 +857,7 @@ export function createTwilioVoiceAdapter(
     handleWebhook,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     getInteractionAck,
     uploadMedia,
     downloadMedia,

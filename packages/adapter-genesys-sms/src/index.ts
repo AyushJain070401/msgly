@@ -7,8 +7,10 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
+import { describeE164Problem } from '@msgly/core';
 
 export interface GenesysSmsConfig {
   /** OAuth2 client-credentials client ID, from a Genesys Cloud OAuth client. */
@@ -55,6 +57,17 @@ export interface GenesysSmsConfig {
 
 export interface GenesysSmsAdapter extends Adapter {
   readonly channel: 'genesys-sms';
+  /**
+   * Check that `config.phoneNumber` is well-formed and actually usable on
+   * this account, without sending anything.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for
+   * free. It is exposed separately for the case where the number is entered
+   * on its own — changing the sending number on an account that is already
+   * connected — and for surfacing the number's status in a UI apart from
+   * the credential status.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
 }
 
 const CAPABILITIES: AdapterCapabilities = {
@@ -377,6 +390,87 @@ export function createGenesysSmsAdapter(config: GenesysSmsConfig): GenesysSmsAda
     }
   }
 
+  /**
+   * Ask Genesys Cloud whether `config.phoneNumber` is held by this org.
+   *
+   * Returns `owned: null` when the question couldn't be answered — most often
+   * because the OAuth client's role lacks `routing:smsPhoneNumber:view`, which is a
+   * narrower permission than the one used to read the org itself. That is
+   * inconclusive, not invalid, so it must not fail the credential check.
+   */
+  async function checkNumberOwnership(): Promise<
+    { owned: true } | { owned: false } | { owned: null; reason: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(
+        `${apiBase}/api/v2/routing/sms/phonenumbers?phoneNumber=${encodeURIComponent(config.phoneNumber)}&pageSize=100`,
+        { headers },
+      );
+      if (res.status === 401 || res.status === 403) {
+        return {
+          owned: null,
+          reason: 'the OAuth client is not permitted to list numbers',
+        };
+      }
+      if (!res.ok) {
+        return { owned: null, reason: `number lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json()) as {
+        entities?: Array<{ phoneNumber?: string; number?: string }>;
+      };
+      const entities = body.entities;
+      if (!Array.isArray(entities)) {
+        return { owned: null, reason: 'unexpected number lookup response' };
+      }
+      // The filter is applied server-side, but Genesys treats it as a
+      // starts-with search on some resources — so ask for a full page above
+      // and match exactly here, rather than trusting a one-row page to hold
+      // the number that was actually asked for.
+      return entities.some(
+        (e) => e.phoneNumber === config.phoneNumber || e.number === config.phoneNumber,
+      )
+        ? { owned: true }
+        : { owned: false };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const problem = describeE164Problem(config.phoneNumber);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.phoneNumber,
+        hint: `GenesysSmsConfig.phoneNumber ${problem}.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.phoneNumber };
+    }
+    if (ownership.owned === false) {
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.phoneNumber,
+        hint: `${config.phoneNumber} is not a number on this Genesys Cloud account. Check it under Admin → Message → SMS Number Inventory.`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.phoneNumber,
+      hint: `${config.phoneNumber} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.clientId) {
       return {
@@ -399,11 +493,14 @@ export function createGenesysSmsAdapter(config: GenesysSmsConfig): GenesysSmsAda
         hint: 'GenesysSmsConfig.region missing. Use your org\'s region domain, e.g. "mypurecloud.com".',
       };
     }
-    if (!config.phoneNumber) {
+    // verifyPhoneNumber() gates on the format too, but running it here first
+    // means a malformed number fails before any network call is made.
+    const phoneProblem = describeE164Problem(config.phoneNumber);
+    if (phoneProblem) {
       return {
         ok: false,
         reason: 'unauthorized',
-        hint: 'GenesysSmsConfig.phoneNumber missing. Use E.164 format, e.g. +15551234567.',
+        hint: `GenesysSmsConfig.phoneNumber ${phoneProblem}.`,
       };
     }
 
@@ -425,9 +522,20 @@ export function createGenesysSmsAdapter(config: GenesysSmsConfig): GenesysSmsAda
         };
       }
       const data = (await res.json()) as { name?: string; id?: string };
+      const accountName = data.name ?? data.id ?? config.clientId;
+
+      // Credentials are good; now confirm the org actually holds this number.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint: numberCheck.hint ?? `The configured number is not usable (${numberCheck.status}).`,
+        };
+      }
       return {
         ok: true,
-        accountInfo: `${data.name ?? data.id ?? config.clientId} (${config.phoneNumber})`,
+        accountInfo: `${accountName} (${config.phoneNumber})`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -449,6 +557,7 @@ export function createGenesysSmsAdapter(config: GenesysSmsConfig): GenesysSmsAda
     handleWebhook,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     uploadMedia,
     downloadMedia,
     parseStatuses,

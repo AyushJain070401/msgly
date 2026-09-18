@@ -88,6 +88,31 @@ exact `POST /api/v2/conversations/messages` request/response shape against
 current Genesys Cloud API docs before production use — it's modeled from
 Genesys's documented SMS messaging pattern, not fetched live docs.
 
+## Checking the number
+
+`verifyCredentials()` validates the phone number as well as the client id and
+secret, so a wrong number is caught where it was typed rather than on the first
+send. The number check is also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+It first checks the number is valid E.164 — naming the actual mistake, such as
+a missing `+` or leftover dashes — then looks it up in the org's SMS number
+inventory (`GET /api/v2/routing/sms/phonenumbers`).
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters here: listing numbers needs `routing:smsPhoneNumber:view`, a narrower
+permission than reading the org, so an OAuth client without it cannot answer
+the ownership question. That reports `ok: true` with `inconclusive` rather than
+failing credentials that work. Only `not_owned` and `malformed` fail.
+
+Like the rest of this adapter, the inventory endpoint is modeled from platform
+knowledge rather than a fetched reference — if it 404s, the check degrades to
+`inconclusive` and setup still succeeds.
+
 ## License
 
 MIT

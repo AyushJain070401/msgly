@@ -1,6 +1,6 @@
 {
   "name": "@msgly/genesys-sms",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Genesys Cloud CX SMS adapter for Msgly",
   "license": "MIT",
   "type": "module",

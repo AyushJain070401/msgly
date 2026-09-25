@@ -1,6 +1,6 @@
 {
   "name": "@msgly/apns",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Apple Push Notification service (APNs) adapter for Msgly",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@msgly/dial",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Dial adapter for Msgly — SMS, MMS and iMessage on agent-provisioned numbers, with HMAC-signed webhooks",
   "license": "MIT",
   "type": "module",

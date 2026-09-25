@@ -3,8 +3,70 @@
     "version": "1.9.0",
     "date": null,
     "pending": true,
-    "packageCount": 3,
+    "packageCount": 32,
     "notes": [
+      {
+        "kind": "Minor",
+        "headline": "Chat links — the URL behind a \"scan to message us\" QR code, for every channel that has one.",
+        "body": "Chat links — the URL behind a \"scan to message us\" QR code, for every channel\nthat has one.\n\n```typescript\nconst links = await hub.getChatLinks({ ref: 'diwali-poster' });\n// [\n//   { channel: 'whatsapp',  url: 'https://wa.me/919876543210',              target: '+91 98765 43210', … },\n//   { channel: 'instagram', url: 'https://ig.me/m/acme?ref=diwali-poster',  target: 'acme', … },\n//   { channel: 'telegram',  url: 'https://t.me/acme_bot?start=diwali-poster', … },\n// ]\n```\n\n**No QR dependency ships with this.** The library returns the URL and you render\nthe image with whatever encoder you already use — the same string works as a\nplain link or a button. `hub.getChatLinks()` fans out over every registered\nchannel; a single adapter throwing is caught and reported through the `'error'`\nevent rather than sinking the batch. One adapter at a time is\n`adapter.getChatLink?.()`.\n\n**Two extras that are not universal, and say so rather than lying.**\n`options.text` prefills the first message; `options.ref` is a tracking payload\nhanded back on the first inbound message, so you can tell which poster a\nconversation came from. Each returned link reports `prefilled` and `tracked` for\nwhat actually happened:\n\n- **WhatsApp** — `wa.me/<number>`. Prefill ✅\n- **Messenger / Instagram** — `m.me/<page>`, `ig.me/m/<handle>`. Ref ✅, as the `referral` event\n- **Telegram** — `t.me/<bot>`. Ref ✅, as `/start <ref>`\n- **LINE** — `line.me/R/ti/p/@<id>`\n- **Viber** — `viber://pa?chatURI=…`, plus `https://viber.me/…` for desktop. Prefill ✅\n- **WeChat** — a QR ticket, see below. Ref ✅, as the scene id\n- **Teams** — `teams.microsoft.com/l/chat/…`. Prefill ✅\n- **Slack** — `slack.com/app_redirect?app=…`\n- **Discord** — the bot install link\n- **Reddit** — `reddit.com/message/compose?to=…`. Prefill ✅\n- **Mattermost / Rocket.Chat** — your server's own DM URL\n- **Google Chat** — the Marketplace listing\n- **TikTok** — the profile URL\n- **SMS** (Twilio, Plivo, Vonage, Telnyx, Genesys) — `sms:<number>`. Prefill ✅\n- **Email** (all eight) — `mailto:<address>`. Prefill ✅\n\nTelegram's `start` parameter allows 64 characters of `A-Za-z0-9_-`, so a `ref`\nit would reject is dropped and `tracked: false` reported — better than emitting\na link that fails to open.\n\n**Three channels are shaped differently, which is worth knowing before building\nthe UI.** WeChat has no shareable URL at all: it mints the code server-side and\nreturns a ticket, so the link carries **`qrImageUrl`** — display WeChat's own\nimage rather than encoding anything. Discord has no \"DM this bot\" URL, since a\nbot is reachable only once it is in a server, so the link is the install one.\nGoogle Chat and TikTok point at a Marketplace listing and a profile because\nneither platform has a direct-message deep link.\n\n**Five channels need one config field**, because the handle is not derivable\nfrom the credentials: `appId` (Slack), `publicAccountUri` (Viber), `teamName`\n(Mattermost), `username` (TikTok), `marketplaceAppId` (Google Chat). Without it\n`getChatLink()` returns `null` and the channel is left out of `getChatLinks()`.\nWhatsApp resolves its number from the Graph API once and caches it, or takes\n`displayPhoneNumber` to skip the call; Messenger, Instagram, Telegram, LINE,\nMattermost and Rocket.Chat resolve their handle the same way.\n\n**Channels with no such concept omit the method entirely** rather than returning\nnull, so the result maps straight onto a list of QR codes with no filtering on\nyour side — and TypeScript makes you guard `getChatLink?.()`. That covers push\n(APNs, FCM, Web Push, Expo), which delivers to a device token nobody can scan\ntheir way into; voice, which places calls rather than opens conversations; and\nmsg91, exotel and rcs-twilio, whose alphanumeric sender ids and messaging\nservice SIDs cannot receive a reply, making an `sms:` link a dead end.\n\n`@msgly/core` also exports **`withQuery(base, params)`**, the shared URL builder\nbehind these links, so escaping is identical everywhere — a prefilled message\nfull of spaces, `&` and emoji survives the round-trip unchanged.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/discord",
+          "@msgly/genesys-sms",
+          "@msgly/gmail",
+          "@msgly/googlechat",
+          "@msgly/instagram",
+          "@msgly/line",
+          "@msgly/mailgun",
+          "@msgly/mattermost",
+          "@msgly/messenger",
+          "@msgly/msteams",
+          "@msgly/outlook",
+          "@msgly/plivo",
+          "@msgly/postmark",
+          "@msgly/reddit",
+          "@msgly/resend",
+          "@msgly/rocketchat",
+          "@msgly/sendgrid",
+          "@msgly/ses",
+          "@msgly/slack",
+          "@msgly/smtp",
+          "@msgly/telegram",
+          "@msgly/telnyx",
+          "@msgly/tiktok",
+          "@msgly/twilio-sms",
+          "@msgly/viber",
+          "@msgly/vonage-sms",
+          "@msgly/wechat",
+          "@msgly/whatsapp"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Carry the sender's profile photo on inbound messages.",
+        "body": "Carry the sender's profile photo on inbound messages.\n\n`ContactRef` gains three optional fields — **`avatarUrl`**, **`username`** and\n**`email`** — so an inbox UI can show who is writing, not just an opaque id.\nAll three are additive; nothing that reads `ContactRef` today changes.\n\n**Where the photo is in the webhook, it is now on the contact.** Discord sends\nan avatar _hash_ rather than a URL, so the adapter builds the CDN link and picks\n`.gif` for animated (`a_`-prefixed) hashes and `.png` otherwise. Viber and\nGoogle Chat carry a URL directly. Rocket.Chat's webhook has no avatar at all,\nbut the server serves one per username at a stable path, so it is derived from\n`serverUrl`. `username` is filled wherever the payload already has a handle:\nDiscord, Telegram, Mattermost, Rocket.Chat, TikTok and Reddit.\n\n**Meta puts none of it in the webhook** — Messenger and Instagram send only the\nPSID/IGSID. The photo is one Graph call away, which is how inbox tools show it,\nso both adapters can now fetch it: set **`fetchSenderProfile: true`** and every\ninbound message arrives with `displayName`, `avatarUrl` and, on Instagram,\n`username` filled in.\n\nIt is off by default because it costs one Graph call per _sender_ on top of the\nwebhook you already handle. Three things keep that honest:\n\n- **Cached per sender** (one hour, `senderProfileCacheTtlMs`), so a burst of\n  messages from one person is a single call.\n- **A failed lookup never costs you the message.** Errors are swallowed and the\n  fields left unset. A failure caches for only 60 s, so a blip does not blank\n  the photo for an hour, while a sender who genuinely has no profile is not\n  re-fetched on every message either.\n- **Unique senders only** per webhook batch, resolved in parallel.\n\n`adapter.getSenderProfile(id)` fetches one on demand for callers who would\nrather not pay it on every message. Note that Messenger splits the name across\n`first_name`/`last_name` (joined into one `displayName`) and has no handle at\nall, so `username` stays unset there — that field is Instagram-only.\n\n**Every email channel now sets `contact.email`.** The address was already the\n`channelUserId`, but setting the field explicitly means callers can read\n`contact.email` uniformly instead of knowing that on email channels the user id\nhappens to be an address.\n\nTwo things are deliberately absent. **WhatsApp exposes no end-user profile photo\nat any endpoint** — `contacts[].profile.name` is the whole of it — so there is\nnothing to opt into there. And channels that hide the photo behind a separate\nprofile call (Slack `users.info`, Telegram `getUserProfilePhotos`, LINE\n`getProfile`) leave `avatarUrl` undefined rather than making an extra request\nper message; the sender id is in `metadata` if you want to fetch it yourself.\n\nPlatform CDN avatar URLs are usually short-lived or access-controlled, so copy\nthe image to your own storage if you need it to keep resolving.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/discord",
+          "@msgly/gmail",
+          "@msgly/googlechat",
+          "@msgly/instagram",
+          "@msgly/mailgun",
+          "@msgly/mattermost",
+          "@msgly/messenger",
+          "@msgly/outlook",
+          "@msgly/postmark",
+          "@msgly/reddit",
+          "@msgly/resend",
+          "@msgly/rocketchat",
+          "@msgly/sendgrid",
+          "@msgly/ses",
+          "@msgly/smtp",
+          "@msgly/telegram",
+          "@msgly/tiktok",
+          "@msgly/viber"
+        ]
+      },
       {
         "kind": "Minor",
         "headline": "Add @msgly/genesys-sms and @msgly/genesys-voice — Genesys Cloud CX contact-center messaging and telephony, as a channel-split pair mirroring @msgly/twilio-sms/@msgly/twilio-voice.",
@@ -13,6 +75,19 @@
           "@msgly/core",
           "@msgly/genesys-sms",
           "@msgly/genesys-voice"
+        ]
+      },
+      {
+        "kind": "Minor",
+        "headline": "Verify the configured phone number at setup time, not at first send.",
+        "body": "Verify the configured phone number at setup time, not at first send.\n\nUntil now these five adapters checked their number was non-empty and nothing\nmore. A number with the country code missing, or one belonging to a different\naccount entirely, sailed through `verifyCredentials()` and only surfaced later\nas an opaque provider error on a real send — far from the screen where it was\ntyped.\n\nEach adapter now exposes **`verifyPhoneNumber()`**, and `verifyCredentials()`\ncalls it, so the normal setup flow gets the check for free and reports which\nfield is actually wrong: the key, the secret, or the number. It is exposed\nseparately for the case where the number is changed on an already-connected\naccount, and for showing the number's status apart from the credential status.\n\nThe check has two stages. First a local E.164 format gate — `isValidE164` and\n`describeE164Problem`, new in `@msgly/core`, which name the specific mistake\n(\"missing the leading +\", \"strip spaces, dashes\") rather than saying invalid.\nThen a provider lookup that answers the question a format check cannot: is\nthis number actually on this account?\n\n- **Twilio** — `GET /2010-04-01/Accounts/{SID}/IncomingPhoneNumbers.json`\n- **Genesys SMS** — `GET /api/v2/routing/sms/phonenumbers`\n- **Genesys Voice** — `GET /api/v2/telephony/providers/edges/dids`\n- **Dial** — no extra request: `verifyCredentials` already fetched\n  `/api/v1/phone-numbers` and discarded the body. Dial's `fromNumber` may be an\n  id, an E.164 number, or a nickname, so it matches on any of them and skips\n  the E.164 gate, which would reject two of the three valid forms.\n\n**An unanswerable lookup is not a failure.** `PhoneNumberCheckResult.status`\nhas four values, not two: `owned`, `not_owned`, `malformed`, and\n`inconclusive`. A Genesys OAuth client without `routing:smsPhoneNumber:view`,\nor a restricted Twilio key that cannot list numbers, cannot answer the\nownership question — reporting that as `not_owned` would make working\ncredentials look broken over a missing read permission. Those cases return\n`ok: true` with `status: 'inconclusive'` and a hint explaining why, so only a\ndefinite `not_owned` or `malformed` fails the check.\n\n**The provider endpoints are modeled, not fetched.** Twilio's\n`IncomingPhoneNumbers` resource is well documented; the Genesys inventory/DID\npaths and Dial's number-list envelope are written from platform knowledge, the\nsame caveat the Genesys adapters already carry throughout. This is why an\nunanswerable lookup fails open: if a path or envelope is wrong, the check\nreports `inconclusive` and setup still succeeds, rather than rejecting a valid\nnumber. Dial's matcher accepts a bare array plus the plausible wrappers\n(`phoneNumbers`, `phone_numbers`, `data`, `numbers`, `entities`) for the same\nreason.\n\nNote that `verifyCredentials()` on these five adapters now fails when the\nnumber is wrong, where before it only checked the key. `@msgly/dial`'s existing\n\"healthy key\" test fixture had to gain a number for this reason — an empty\nnumber list now legitimately means \"that number is not on this account\".\n\n`@msgly/dial` additionally exports `matchDialFromNumber(body, fromNumber)`,\nthe pure matcher behind its check, for callers that already hold a number list.\n\nExisting `verifyCredentials()` callers need no change: the return type is\nunchanged, and `accountInfo` keeps its current format on success.",
+        "packages": [
+          "@msgly/core",
+          "@msgly/dial",
+          "@msgly/genesys-sms",
+          "@msgly/genesys-voice",
+          "@msgly/twilio-sms",
+          "@msgly/twilio-voice"
         ]
       }
     ]

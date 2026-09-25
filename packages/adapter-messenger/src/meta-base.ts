@@ -1,4 +1,6 @@
 import type {
+  ChatLink,
+  ChatLinkOptions,
   ContactRef,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface MetaGraphConfig {
   /** Page access token (Messenger) or IG-enabled Page token (Instagram). */
@@ -20,8 +23,47 @@ export interface MetaGraphConfig {
   verifyToken: string;
   /** Override for tests. Defaults to https://graph.facebook.com. */
   apiBase?: string;
+  /**
+   * The handle chat links point at — a Facebook Page username or id for
+   * `m.me`, an Instagram handle for `ig.me`. Optional: without it
+   * `getChatLink()` reads it from the Graph API once and caches it.
+   */
+  chatLinkId?: string;
   /** Graph API version, defaults to v23.0. */
   apiVersion?: string;
+  /**
+   * Fetch the sender's profile (name, photo, and on Instagram the handle) and
+   * put it on `contact` for every inbound message.
+   *
+   * Off by default, because Meta puts none of this in the webhook: turning it
+   * on costs one Graph call per *sender* (results are cached) on top of the
+   * webhook you already handle. Turn it on when you want the photo in your
+   * inbox UI the way respond.io and similar tools show it.
+   *
+   * Uses the same Page token you already send with. Messenger returns
+   * `first_name`/`last_name`/`profile_pic`; Instagram returns
+   * `name`/`username`/`profile_pic`.
+   */
+  fetchSenderProfile?: boolean;
+  /**
+   * How long a fetched profile stays cached, in ms. Defaults to one hour.
+   * Meta's `profile_pic` URLs are signed and expire, so this is deliberately
+   * not unbounded.
+   */
+  senderProfileCacheTtlMs?: number;
+}
+
+/** A sender profile, as far as the channel exposes one. */
+export interface MetaSenderProfile {
+  /** Instagram `name`; Messenger's `first_name` and `last_name` joined. */
+  name?: string;
+  /** Instagram handle. Messenger has no username to give. */
+  username?: string;
+  /**
+   * Profile photo URL. Meta signs these and they expire — copy the image to
+   * your own storage if you need it to keep resolving.
+   */
+  avatarUrl?: string;
 }
 
 /** The slice of behavior the two Meta channels share. */
@@ -34,6 +76,17 @@ export interface MetaGraphBase {
   uploadMedia(file: MediaFile): Promise<MediaReference>;
   downloadMedia(ref: MediaReference): Promise<MediaFile>;
   sendTyping(contact: ContactRef): Promise<void>;
+  /**
+   * Fetch one sender's profile on demand, cached the same way
+   * `fetchSenderProfile` caches it. Use this when you want the photo for one
+   * specific person rather than on every inbound message.
+   */
+  getSenderProfile(senderId: string): Promise<MetaSenderProfile | null>;
+  /**
+   * Build the `m.me` / `ig.me` link that starts a chat with this account —
+   * what a "scan to message us" QR code encodes.
+   */
+  getChatLink(options?: ChatLinkOptions): Promise<ChatLink | null>;
 }
 
 export type MetaChannel = 'messenger' | 'instagram';
@@ -190,6 +243,138 @@ export function createMetaGraphBase(
     };
   }
 
+  // Meta webhooks carry only the PSID/IGSID, so a profile costs one Graph call
+  // per *sender*. The cache collapses a burst from one person into a single
+  // call; entries expire because `profile_pic` URLs are signed and temporary.
+  const profileCache = new Map<
+    string,
+    { until: number; profile: MetaSenderProfile | null }
+  >();
+
+  async function getSenderProfile(senderId: string): Promise<MetaSenderProfile | null> {
+    const hit = profileCache.get(senderId);
+    if (hit && Date.now() < hit.until) return hit.profile;
+
+    const ttl = config.senderProfileCacheTtlMs ?? 60 * 60 * 1000;
+    // Instagram exposes `name` and a handle; Messenger splits the name in two
+    // and has no handle at all.
+    const fields =
+      channel === 'instagram'
+        ? 'name,username,profile_pic'
+        : 'first_name,last_name,profile_pic';
+
+    let profile: MetaSenderProfile | null = null;
+    let ok = false;
+    try {
+      const res = await fetch(
+        `${apiBase()}/${apiVersion()}/${encodeURIComponent(senderId)}` +
+          `?fields=${fields}&access_token=${encodeURIComponent(config.pageAccessToken)}`,
+      );
+      if (res.ok) {
+        const d = (await res.json().catch(() => ({}))) as {
+          name?: string;
+          username?: string;
+          profile_pic?: string;
+          first_name?: string;
+          last_name?: string;
+        };
+        const joined = [d.first_name, d.last_name].filter(Boolean).join(' ');
+        const name = d.name ?? (joined || undefined);
+        profile = {
+          ...(name ? { name } : {}),
+          ...(d.username ? { username: d.username } : {}),
+          ...(d.profile_pic ? { avatarUrl: d.profile_pic } : {}),
+        };
+        ok = true;
+      }
+    } catch {
+      // A profile is decoration. Never let it cost us the message.
+      profile = null;
+    }
+
+    // Cache a failure only briefly, so a blip does not blank the photo for an
+    // hour, while a sender who genuinely has no profile is not re-fetched on
+    // every message either.
+    profileCache.set(senderId, {
+      until: Date.now() + (ok ? ttl : Math.min(ttl, 60_000)),
+      profile,
+    });
+    return profile;
+  }
+
+  /** Fills in what the webhook could not: name, handle and photo. */
+  async function withSenderProfiles(messages: InboundMessage[]): Promise<InboundMessage[]> {
+    if (!config.fetchSenderProfile || messages.length === 0) return messages;
+
+    const ids = [...new Set(messages.map((m) => m.contact.channelUserId))];
+    const profiles = new Map(
+      await Promise.all(ids.map(async (id) => [id, await getSenderProfile(id)] as const)),
+    );
+
+    for (const m of messages) {
+      const p = profiles.get(m.contact.channelUserId);
+      if (!p) continue;
+      if (p.name) m.contact.displayName = p.name;
+      if (p.username) m.contact.username = p.username;
+      if (p.avatarUrl) m.contact.avatarUrl = p.avatarUrl;
+    }
+    return messages;
+  }
+
+  // Looked up once. A Page username can change, but not mid-process.
+  let cachedLinkId: string | null = null;
+
+  /**
+   * `https://m.me/<page>` (Messenger) or `https://ig.me/m/<handle>`
+   * (Instagram) — the link behind a "message us" QR code, the same one the
+   * Meta inbox hands you.
+   *
+   * `ref` rides along as the `ref` parameter, which Meta gives back on the
+   * first message as a `referral` event: that is how you tell which poster or
+   * campaign a conversation came from. A prefilled message has nowhere to go
+   * in Meta's link format, so `text` is ignored and `prefilled` says so.
+   *
+   * Returns null when there is no handle to link to — a Messenger Page with no
+   * username falls back to its numeric id, which `m.me` also accepts, but
+   * Instagram has no such fallback.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    let resolved = cachedLinkId ?? config.chatLinkId ?? null;
+
+    if (!resolved) {
+      try {
+        const res = await fetch(
+          `${apiBase()}/${apiVersion()}/me?fields=id,username` +
+            `&access_token=${encodeURIComponent(config.pageAccessToken)}`,
+        );
+        if (res.ok) {
+          const d = (await res.json().catch(() => ({}))) as {
+            id?: string;
+            username?: string;
+          };
+          // Instagram needs the handle; Messenger is happy with either.
+          resolved = d.username ?? (channel === 'messenger' ? (d.id ?? null) : null);
+        }
+      } catch {
+        // A link is a convenience; never let it throw at the caller.
+        return null;
+      }
+    }
+    if (!resolved) return null;
+    cachedLinkId = resolved;
+
+    const base =
+      channel === 'instagram' ? `https://ig.me/m/${resolved}` : `https://m.me/${resolved}`;
+
+    return {
+      channel,
+      url: withQuery(base, { ref: options.ref }),
+      prefilled: false,
+      tracked: Boolean(options.ref),
+      target: resolved,
+    };
+  }
+
   async function handleWebhook(req: WebhookRequest): Promise<InboundMessage[]> {
     const body = req.body as MetaWebhookBody;
     if (!body.entry || body.entry.length === 0) return [];
@@ -205,6 +390,9 @@ export function createMetaGraphBase(
             channel,
             direction: 'inbound',
             account: { channel, channelAccountId: event.recipient.id },
+            // Meta webhooks carry only the PSID/IGSID. The name, handle and
+            // photo come from a Graph call, which `fetchSenderProfile` adds
+            // below — off by default, so this stays a bare id unless asked.
             contact: { channel, channelUserId: event.sender.id },
             content: { type: 'text', text: event.postback.title },
             timestamp: new Date(event.timestamp).toISOString(),
@@ -227,6 +415,9 @@ export function createMetaGraphBase(
           channel,
           direction: 'inbound',
           account: { channel, channelAccountId: event.recipient.id },
+          // Meta webhooks carry only the PSID/IGSID. The name, handle and
+          // photo come from a Graph call, which `fetchSenderProfile` adds
+          // below — off by default, so this stays a bare id unless asked.
           contact: { channel, channelUserId: event.sender.id },
           content,
           timestamp: new Date(event.timestamp).toISOString(),
@@ -237,7 +428,7 @@ export function createMetaGraphBase(
         });
       }
     }
-    return messages;
+    return withSenderProfiles(messages);
   }
 
   async function sendTyping(contact: ContactRef): Promise<void> {
@@ -371,6 +562,8 @@ export function createMetaGraphBase(
     verifyCredentials,
     uploadMedia,
     downloadMedia,
+    getSenderProfile,
+    getChatLink,
     sendTyping,
   };
 }

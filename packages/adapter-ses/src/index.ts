@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
@@ -12,6 +14,7 @@ import type {
   UnsubscribeConfig,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 import { buildUnsubscribeHeaders } from '@msgly/core';
 
 import { type AwsCredentials, signRequest } from './sigv4.js';
@@ -648,6 +651,7 @@ export function createSesAdapter(config: SesConfig): SesAdapter {
         contact: {
           channel: 'ses',
           channelUserId: from.address,
+          email: from.address,
           ...(from.displayName ? { displayName: from.displayName } : {}),
         },
         content: { type: 'text', text },
@@ -746,9 +750,33 @@ export function createSesAdapter(config: SesConfig): SesAdapter {
     };
   }
 
+  /**
+   * `mailto:` link for an "email us" QR code or button. Scanning it opens the
+   * reader's mail client with this address filled in, and `text` as the body.
+   *
+   * Email has no referral parameter, so `ref` cannot be tracked — put it in
+   * the subject or body yourself if you need it.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    // `from` is often "Acme Support <support@acme.com>"; mailto: wants only
+    // the address inside the angle brackets.
+    const raw = config.from;
+    const address = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim();
+    if (!address.includes('@')) return null;
+
+    return {
+      channel: 'ses',
+      url: withQuery(`mailto:${address}`, { body: options.text }),
+      prefilled: Boolean(options.text),
+      tracked: false,
+      target: address,
+    };
+  }
+
   return {
     channel: 'ses',
     capabilities,
+    getChatLink,
     send,
     handleWebhook,
     verifySignature,

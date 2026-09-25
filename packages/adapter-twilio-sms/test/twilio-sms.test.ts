@@ -308,3 +308,25 @@ describe('number lookup partial matching', () => {
     expect(lookupUrl).toContain('PageSize=50');
   });
 });
+
+describe('getChatLink', () => {
+  it('builds an sms: link with the body prefilled', async () => {
+    const a = createTwilioSmsAdapter(config);
+
+    const link = await a.getChatLink!({ text: 'START' });
+
+    expect(link).toEqual({
+      channel: 'twilio-sms',
+      url: 'sms:+15551234567?body=START',
+      prefilled: true,
+      tracked: false,
+      target: '+15551234567',
+    });
+  });
+
+  it('returns null for an alphanumeric sender id, which nobody can reply to', async () => {
+    const a = createTwilioSmsAdapter({ ...config, phoneNumber: 'ACME' });
+
+    expect(await a.getChatLink!()).toBeNull();
+  });
+});

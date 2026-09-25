@@ -343,3 +343,53 @@ describe('replyTo and reactions', () => {
     ).rejects.toThrow('REACTION_INVALID');
   });
 });
+
+describe('getChatLink', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function mockGetMe(username: string) {
+    globalThis.fetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        result: { id: 1, username, first_name: 'Acme', can_join_groups: true },
+      }),
+    })) as unknown as typeof fetch;
+  }
+
+  it('builds the t.me link from the bot username', async () => {
+    mockGetMe('acme_support_bot');
+    const a = createTelegramAdapter(config);
+
+    const link = await a.getChatLink!();
+
+    expect(link!.url).toBe('https://t.me/acme_support_bot');
+    expect(link!.target).toBe('@acme_support_bot');
+  });
+
+  it('puts ref in the start parameter, which arrives as /start <ref>', async () => {
+    mockGetMe('acme_support_bot');
+    const a = createTelegramAdapter(config);
+
+    const link = await a.getChatLink!({ ref: 'poster-42' });
+
+    expect(link!.url).toBe('https://t.me/acme_support_bot?start=poster-42');
+    expect(link!.tracked).toBe(true);
+  });
+
+  it('drops a ref Telegram would reject rather than emitting a broken link', async () => {
+    mockGetMe('acme_support_bot');
+    const a = createTelegramAdapter(config);
+
+    // Spaces and punctuation are not allowed in a start parameter.
+    const link = await a.getChatLink!({ ref: 'diwali sale!' });
+
+    expect(link!.url).toBe('https://t.me/acme_support_bot');
+    expect(link!.tracked).toBe(false);
+  });
+});

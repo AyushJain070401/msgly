@@ -1,3 +1,4 @@
+import type { ChatLink, ChatLinkOptions } from './chat-link.js';
 import type { Adapter, CredentialsCheckResult, WebhookRequest } from './adapter.js';
 import {
   type BulkResult,
@@ -167,6 +168,20 @@ export interface Hub {
    * message already handed to the platform is never reported as cancelled.
    */
   sendBulk(options: BulkSendOptions): Promise<BulkResult>;
+
+  /**
+   * Chat links for every registered channel that has one — the URLs behind
+   * "scan to chat" QR codes.
+   *
+   * Channels that cannot produce a link are left out rather than returned as
+   * nulls, so the result maps straight onto a list of QR codes. Render the
+   * images yourself from `link.url`; this library ships no QR dependency, and
+   * the same URL works as a plain link or a button.
+   *
+   * One misbehaving adapter does not sink the batch: a channel whose lookup
+   * throws is dropped and reported through the `'error'` event.
+   */
+  getChatLinks(options?: ChatLinkOptions): Promise<ChatLink[]>;
 
   /** Subscribe to a hub event. Returns an unsubscribe function. */
   on<K extends keyof HubEventMap>(event: K, handler: HubEventMap[K]): () => void;
@@ -420,6 +435,26 @@ export function createHub(options: HubOptions = {}): Hub {
       }
 
       return fresh;
+    },
+
+    async getChatLinks(options) {
+      const results = await Promise.all(
+        [...adapters.entries()].map(async ([channel, adapter]) => {
+          try {
+            return (await adapter.getChatLink?.(options)) ?? null;
+          } catch (err) {
+            // A link is a convenience. One channel failing to produce one must
+            // not cost you the links for every other channel.
+            emitter.emit(
+              'error',
+              err instanceof Error ? err : new Error(String(err)),
+              { channel, op: 'getChatLink' },
+            );
+            return null;
+          }
+        }),
+      );
+      return results.filter((link): link is ChatLink => link !== null);
     },
 
     async connect(opts = {}) {

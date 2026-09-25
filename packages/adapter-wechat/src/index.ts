@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -701,9 +703,57 @@ export function createWeChatAdapter(config: WeChatConfig): WeChatAdapter {
     return callMassApi('/cgi-bin/message/mass/send', { touser: openIds, ...body }, 'mass');
   }
 
+  /**
+   * A scannable QR for this Official Account.
+   *
+   * WeChat is the one channel with no shareable chat URL: you ask WeChat to
+   * mint a code, and it returns a ticket. So `url` is the payload WeChat put
+   * inside the QR, and `qrImageUrl` is WeChat's own rendering of it — display
+   * that image rather than encoding anything yourself.
+   *
+   * `ref` becomes the scene string, which comes back on the scan event, so you
+   * can tell which poster someone scanned. Without one the code is still
+   * valid; it just carries a constant scene.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(
+        `${apiBase}/cgi-bin/qrcode/create?access_token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            // The permanent variant: a printed poster should not stop working
+            // after 30 days.
+            action_name: 'QR_LIMIT_STR_SCENE',
+            action_info: { scene: { scene_str: options.ref ?? 'msgly' } },
+          }),
+        },
+      );
+      if (!res.ok) return null;
+
+      const d = (await res.json().catch(() => ({}))) as { ticket?: string; url?: string };
+      if (!d.ticket || !d.url) return null;
+
+      return {
+        channel: 'wechat',
+        url: d.url,
+        qrImageUrl: `https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket=${encodeURIComponent(d.ticket)}`,
+        prefilled: false,
+        tracked: Boolean(options.ref),
+        target: config.appId,
+      };
+    } catch {
+      // A link is a convenience; never let it throw at the caller.
+      return null;
+    }
+  }
+
   return {
     channel: 'wechat',
     capabilities: CAPABILITIES,
+    getChatLink,
     massSend,
     massSendToUsers,
     send,

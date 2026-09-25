@@ -151,6 +151,7 @@ describe('createOutlookAdapter', () => {
     expect(m.channel).toBe('outlook');
     expect(m.contact.channelUserId).toBe('alice@example.com');
     expect(m.contact.displayName).toBe('Alice');
+    expect(m.contact.email).toBe('alice@example.com');
     expect((m.content as { text: string }).text).toBe('hello from outlook');
     expect(m.metadata?.messageId).toBe('AAMkAGI');
     expect(m.metadata?.conversationId).toBe('conv-1');

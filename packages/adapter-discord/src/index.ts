@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface DiscordConfig {
   /** Application ID from the Discord Developer Portal → General Information. */
@@ -334,7 +337,8 @@ export function createDiscordAdapter(config: DiscordConfig): DiscordAdapter {
         contact: {
           channel: 'discord',
           channelUserId: interaction.channel_id,
-          ...(user?.username ? { displayName: user.username } : {}),
+          ...(user?.username ? { displayName: user.username, username: user.username } : {}),
+          ...(user && avatarUrlFor(user) ? { avatarUrl: avatarUrlFor(user)! } : {}),
         },
         content: { type: 'text', text },
         timestamp: new Date().toISOString(),
@@ -466,8 +470,31 @@ export function createDiscordAdapter(config: DiscordConfig): DiscordAdapter {
     };
   }
 
+  /**
+   * The bot's install link — `discord.com/oauth2/authorize?client_id=…`.
+   *
+   * Discord has no "DM this bot" URL: a bot can only be reached once it is in
+   * a server, so the link that actually starts a conversation is the install
+   * one. That is what belongs in a QR code here.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.applicationId) return null;
+
+    return {
+      channel: 'discord',
+      url: withQuery('https://discord.com/oauth2/authorize', {
+        client_id: config.applicationId,
+        scope: 'bot applications.commands',
+      }),
+      prefilled: false,
+      tracked: false,
+      target: config.applicationId,
+    };
+  }
+
   return {
     channel: 'discord',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,
@@ -498,6 +525,18 @@ interface DiscordUser {
   id: string;
   username: string;
   discriminator?: string;
+  /** Avatar hash; null for users on a default avatar. */
+  avatar?: string | null;
+}
+
+/**
+ * Discord sends an avatar *hash*, not a URL. Animated avatars (hash prefixed
+ * `a_`) are served as `.gif`; everything else as `.png`.
+ */
+function avatarUrlFor(user: DiscordUser): string | undefined {
+  if (!user.avatar) return undefined;
+  const ext = user.avatar.startsWith('a_') ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${ext}`;
 }
 
 interface DiscordCommandData {

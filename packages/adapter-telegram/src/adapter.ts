@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   ContactRef,
   CredentialsCheckResult,
@@ -11,6 +13,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface TelegramConfig {
   /** Bot token from @BotFather. */
@@ -338,6 +341,9 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
         channel: 'telegram',
         channelUserId: m.chat.id.toString(),
         displayName: m.from?.first_name ?? m.chat.first_name ?? m.chat.title,
+        // Telegram puts no avatar in the update; it needs a separate
+        // getUserProfilePhotos + getFile round-trip, so it stays unset here.
+        ...(m.from?.username ? { username: m.from.username } : {}),
       },
       content,
       timestamp: new Date(m.date * 1000).toISOString(),
@@ -375,6 +381,7 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
             channel: 'telegram',
             channelUserId: cq.from.id.toString(),
             displayName: cq.from.first_name,
+            ...(cq.from.username ? { username: cq.from.username } : {}),
           },
           content: { type: 'text', text: cq.data ?? '' },
           timestamp: new Date().toISOString(),
@@ -595,8 +602,47 @@ export function createTelegramAdapter(config: TelegramConfig): TelegramAdapter {
     };
   }
 
+  // The bot username never changes under a given token, so one lookup does.
+  let cachedBotUsername: string | null = null;
+
+  /**
+   * `https://t.me/<bot>` — the link behind a "start this bot" QR code.
+   *
+   * `ref` becomes the `start` parameter, which Telegram delivers as
+   * `/start <ref>` on the first message: that is how you tell which poster or
+   * campaign a chat came from. Telegram allows 64 characters of `A-Za-z0-9_-`
+   * there, so anything longer or stranger is dropped rather than silently
+   * producing a link that fails to open.
+   *
+   * A prefilled message is not possible for bots — `?text=` works only on
+   * links to people — so `text` is ignored and `prefilled` says so.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!cachedBotUsername) {
+      try {
+        cachedBotUsername = (await getBotInfo()).username;
+      } catch {
+        // A link is a convenience; never let it throw at the caller.
+        return null;
+      }
+    }
+    if (!cachedBotUsername) return null;
+
+    const start =
+      options.ref && /^[A-Za-z0-9_-]{1,64}$/.test(options.ref) ? options.ref : undefined;
+
+    return {
+      channel: 'telegram',
+      url: withQuery(`https://t.me/${cachedBotUsername}`, { start }),
+      prefilled: false,
+      tracked: Boolean(start),
+      target: `@${cachedBotUsername}`,
+    };
+  }
+
   return {
     channel: 'telegram',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,
@@ -628,7 +674,7 @@ interface TelegramMessage {
   message_id: number;
   date: number;
   chat: { id: number; first_name?: string; title?: string };
-  from?: { id: number; first_name?: string };
+  from?: { id: number; first_name?: string; username?: string };
   text?: string;
   caption?: string;
   photo?: Array<{ file_id: string }>;
@@ -641,7 +687,7 @@ interface TelegramMessage {
 
 interface TelegramCallbackQuery {
   id: string;
-  from: { id: number; first_name?: string };
+  from: { id: number; first_name?: string; username?: string };
   message?: TelegramMessage;
   data?: string;
 }

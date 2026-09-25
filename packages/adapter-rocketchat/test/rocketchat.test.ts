@@ -206,6 +206,9 @@ describe('createRocketChatAdapter', () => {
     // The room is the conversation, so replies address the room.
     expect(m.contact.channelUserId).toBe('room-1');
     expect(m.contact.displayName).toBe('alice');
+    expect(m.contact.username).toBe('alice');
+    // The webhook carries no avatar, so it is derived from the server path.
+    expect(m.contact.avatarUrl).toBe('https://chat.test.local/avatar/alice');
     expect(m.metadata?.userId).toBe('u-1');
     expect(m.metadata?.channelName).toBe('general');
     expect(m.externalId).toBe('msg-9');

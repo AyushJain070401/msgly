@@ -356,3 +356,165 @@ describe('Instagram Login OAuth helpers', () => {
     await expect(a.getLongLivedToken('short')).rejects.toThrow('appSecret is required');
   });
 });
+
+describe('fetchSenderProfile', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  const webhook = (senderId: string, mid: string) => ({
+    headers: {},
+    rawBody: new TextEncoder().encode(''),
+    body: {
+      object: 'instagram',
+      entry: [
+        {
+          id: 'ig-account',
+          time: 1700000000000,
+          messaging: [
+            {
+              sender: { id: senderId },
+              recipient: { id: 'ig-account' },
+              timestamp: 1700000000000,
+              message: { mid, text: 'hello' },
+            },
+          ],
+        },
+      ],
+    },
+    query: {},
+  });
+
+  function mockProfile(body: unknown, ok = true) {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      urls.push(url);
+      return { ok, status: ok ? 200 : 400, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    return urls;
+  }
+
+  it('leaves the contact bare when the option is off', async () => {
+    const urls = mockProfile({});
+    const a = createInstagramAdapter(config);
+
+    const [m] = await a.handleWebhook(webhook('user-ig', 'mid.1'));
+
+    expect(m!.contact.avatarUrl).toBeUndefined();
+    // The whole point of the default: no Graph call per message.
+    expect(urls).toHaveLength(0);
+  });
+
+  it('fills name, handle and photo from the Graph profile when on', async () => {
+    const urls = mockProfile({
+      name: 'Ayush Jain',
+      username: 'ayushj',
+      profile_pic: 'https://scontent.cdninstagram.com/pic.jpg',
+    });
+    const a = createInstagramAdapter({ ...config, fetchSenderProfile: true });
+
+    const [m] = await a.handleWebhook(webhook('user-ig', 'mid.1'));
+
+    expect(m!.contact.displayName).toBe('Ayush Jain');
+    expect(m!.contact.username).toBe('ayushj');
+    expect(m!.contact.avatarUrl).toBe('https://scontent.cdninstagram.com/pic.jpg');
+    expect(urls[0]).toContain('/user-ig?fields=name,username,profile_pic');
+  });
+
+  it('caches per sender, so a burst costs one Graph call', async () => {
+    const urls = mockProfile({ name: 'Ayush', profile_pic: 'https://cdn/p.jpg' });
+    const a = createInstagramAdapter({ ...config, fetchSenderProfile: true });
+
+    await a.handleWebhook(webhook('user-ig', 'mid.1'));
+    await a.handleWebhook(webhook('user-ig', 'mid.2'));
+
+    expect(urls).toHaveLength(1);
+  });
+
+  it('still delivers the message when the profile call fails', async () => {
+    mockProfile({ error: { message: 'nope' } }, false);
+    const a = createInstagramAdapter({ ...config, fetchSenderProfile: true });
+
+    const [m] = await a.handleWebhook(webhook('user-ig', 'mid.1'));
+
+    expect(m!.contact.channelUserId).toBe('user-ig');
+    expect(m!.contact.avatarUrl).toBeUndefined();
+  });
+
+  it('getSenderProfile fetches one profile on demand', async () => {
+    mockProfile({ name: 'Ayush', username: 'ayushj', profile_pic: 'https://cdn/p.jpg' });
+    const a = createInstagramAdapter(config);
+
+    expect(await a.getSenderProfile('user-ig')).toEqual({
+      name: 'Ayush',
+      username: 'ayushj',
+      avatarUrl: 'https://cdn/p.jpg',
+    });
+  });
+});
+
+describe('getChatLink', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('builds the ig.me link from the configured handle, with no API call', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createInstagramAdapter({ ...config, chatLinkId: 'rockky_2k21' });
+    const link = await a.getChatLink();
+
+    expect(link).toEqual({
+      channel: 'instagram',
+      url: 'https://ig.me/m/rockky_2k21',
+      prefilled: false,
+      tracked: false,
+      target: 'rockky_2k21',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('resolves the handle from the Graph API and caches it', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({ id: '17841400000', username: 'acme' }) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createInstagramAdapter(config);
+
+    expect((await a.getChatLink())!.url).toBe('https://ig.me/m/acme');
+    expect((await a.getChatLink())!.url).toBe('https://ig.me/m/acme');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('carries ref for referral tracking, and reports text as unsupported', async () => {
+    const a = createInstagramAdapter({ ...config, chatLinkId: 'acme' });
+
+    const link = await a.getChatLink({ ref: 'diwali-poster', text: 'ignored' });
+
+    expect(link!.url).toBe('https://ig.me/m/acme?ref=diwali-poster');
+    expect(link!.tracked).toBe(true);
+    // Meta's link format has nowhere to put a prefilled message.
+    expect(link!.prefilled).toBe(false);
+  });
+
+  it('returns null when there is no handle to link to', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ id: '17841400000' }),
+    })) as unknown as typeof fetch;
+
+    const a = createInstagramAdapter(config);
+
+    expect(await a.getChatLink()).toBeNull();
+  });
+});

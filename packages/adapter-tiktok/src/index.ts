@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -45,6 +47,11 @@ export interface TikTokDirectMessageConfig {
 export interface TikTokConfig {
   /** App client key from the TikTok for Developers console. */
   clientKey: string;
+  /**
+   * The account's TikTok handle, without the `@`. Required by
+   * `getChatLink()`; the messaging scopes do not return it.
+   */
+  username?: string;
   /** App client secret from the same page. Also verifies webhook signatures. */
   clientSecret: string;
 
@@ -819,7 +826,7 @@ export function createTikTokAdapter(config: TikTokConfig): TikTokAdapter {
         // Replies address the video, which is what the reply endpoint wants
         // back; the commenter's own id rides along in metadata.
         channelUserId: videoId,
-        ...(c.username ? { displayName: c.username } : {}),
+        ...(c.username ? { displayName: c.username, username: c.username } : {}),
       },
       content: { type: 'text', text: c.text ?? '' },
       timestamp: c.create_time
@@ -857,7 +864,9 @@ export function createTikTokAdapter(config: TikTokConfig): TikTokAdapter {
       contact: {
         channel: 'tiktok',
         channelUserId: conversationId,
-        ...(payload.from_username ? { displayName: payload.from_username } : {}),
+        ...(payload.from_username
+          ? { displayName: payload.from_username, username: payload.from_username }
+          : {}),
       },
       content: { type: 'text', text },
       timestamp: payload.create_time
@@ -1119,8 +1128,30 @@ export function createTikTokAdapter(config: TikTokConfig): TikTokAdapter {
     throw new Error('TikTok downloadMedia is not supported — the API exposes no media download.');
   }
 
+  /**
+   * `https://www.tiktok.com/@<username>` — the profile people land on to
+   * message this account.
+   *
+   * TikTok has no direct-message deep link: DMs open from the profile, so the
+   * profile is as close as a QR code can get. Needs `username`, which the
+   * messaging scopes do not hand back.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    const handle = config.username?.replace(/^@/, '').trim();
+    if (!handle) return null;
+
+    return {
+      channel: 'tiktok',
+      url: `https://www.tiktok.com/@${handle}`,
+      prefilled: false,
+      tracked: false,
+      target: `@${handle}`,
+    };
+  }
+
   return {
     channel: 'tiktok',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

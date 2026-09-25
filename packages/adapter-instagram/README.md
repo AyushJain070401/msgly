@@ -74,8 +74,50 @@ interface InstagramConfig {
 
   /** Graph API version. Defaults to v23.0. */
   apiVersion?: string;
+
+  /**
+   * Put the sender's name, photo (and on Instagram, handle) on `contact` for
+   * every inbound message. Off by default — see "Sender profiles" below.
+   */
+  fetchSenderProfile?: boolean;
+
+  /** How long a fetched profile is cached, in ms. Defaults to one hour. */
+  senderProfileCacheTtlMs?: number;
 }
 ```
+
+## Sender profiles (photos)
+
+Instagram's webhook carries only the sender's IGSID — no name, no photo. The
+photo lives behind a Graph call, which is how inbox tools like respond.io show
+it. Opt in:
+
+```typescript
+const instagram = createInstagramAdapter({
+  pageAccessToken: process.env.IG_PAGE_TOKEN!,
+  appSecret: process.env.META_APP_SECRET!,
+  verifyToken: process.env.META_VERIFY_TOKEN!,
+  fetchSenderProfile: true,
+});
+```
+
+Every inbound message then arrives with `contact.displayName`,
+`contact.username` and `contact.avatarUrl` filled in.
+
+It is off by default because it costs one Graph call per *sender* on top of the
+webhook. Profiles are cached for an hour (`senderProfileCacheTtlMs`), so a
+burst of messages from one person is a single call, and a failed lookup never
+costs you the message — the fields are simply left unset.
+
+Prefer to fetch on demand? Skip the flag and call it yourself:
+
+```typescript
+const profile = await instagram.getSenderProfile(message.contact.channelUserId);
+// → { name: 'Ayush Jain', username: 'ayushj', avatarUrl: 'https://…' }
+```
+
+Meta signs `profile_pic` URLs and they expire, so copy the image to your own
+storage if you need it to keep resolving.
 
 ## Authentication
 

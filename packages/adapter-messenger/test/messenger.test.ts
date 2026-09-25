@@ -196,3 +196,80 @@ describe('publishPost', () => {
     await expect(a.publishPost({})).rejects.toThrow('message, link or photoUrl');
   });
 });
+
+describe('fetchSenderProfile', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  const webhook = (senderId: string, mid: string) => ({
+    headers: {},
+    rawBody: encode(''),
+    body: {
+      object: 'page',
+      entry: [
+        {
+          id: 'page-1',
+          time: 1700000000000,
+          messaging: [
+            {
+              sender: { id: senderId },
+              recipient: { id: 'page-1' },
+              timestamp: 1700000000000,
+              message: { mid, text: 'hello' },
+            },
+          ],
+        },
+      ],
+    },
+    query: {},
+  });
+
+  function mockProfile(body: unknown, ok = true) {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      urls.push(url);
+      return { ok, status: ok ? 200 : 400, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    return urls;
+  }
+
+  it('leaves the contact bare when the option is off', async () => {
+    const urls = mockProfile({});
+    const a = createMessengerAdapter(config);
+
+    const [m] = await a.handleWebhook(webhook('psid-1', 'mid.1'));
+
+    expect(m!.contact.avatarUrl).toBeUndefined();
+    expect(urls).toHaveLength(0);
+  });
+
+  it('joins first_name and last_name, since Messenger splits them', async () => {
+    const urls = mockProfile({
+      first_name: 'Ayush',
+      last_name: 'Jain',
+      profile_pic: 'https://scontent.xx.fbcdn.net/pic.jpg',
+    });
+    const a = createMessengerAdapter({ ...config, fetchSenderProfile: true });
+
+    const [m] = await a.handleWebhook(webhook('psid-1', 'mid.1'));
+
+    expect(m!.contact.displayName).toBe('Ayush Jain');
+    expect(m!.contact.avatarUrl).toBe('https://scontent.xx.fbcdn.net/pic.jpg');
+    // Messenger has no handle to give, unlike Instagram.
+    expect(m!.contact.username).toBeUndefined();
+    expect(urls[0]).toContain('/psid-1?fields=first_name,last_name,profile_pic');
+  });
+
+  it('still delivers the message when the profile call fails', async () => {
+    mockProfile({ error: { message: 'nope' } }, false);
+    const a = createMessengerAdapter({ ...config, fetchSenderProfile: true });
+
+    const [m] = await a.handleWebhook(webhook('psid-1', 'mid.1'));
+
+    expect(m!.contact.channelUserId).toBe('psid-1');
+    expect(m!.contact.avatarUrl).toBeUndefined();
+  });
+});

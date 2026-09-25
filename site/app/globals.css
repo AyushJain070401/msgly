@@ -723,6 +723,14 @@ footer a:hover { color: var(--accent); }
 .md-list { margin: 0 0 13px; padding-left: 20px; color: var(--muted); line-height: 1.72; }
 .md-list li { margin-bottom: 6px; }
 
+.md-code {
+  margin: 0 0 13px; padding: 14px 16px; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-soft);
+  font-size: 12.5px; line-height: 1.7;
+}
+.md-code code { background: none; border: 0; padding: 0; color: var(--muted); white-space: pre; }
+
 .cl-pkgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px !important; }
 .cl-pkgs .pkg {
   border: 1px solid var(--border); background: var(--bg-soft);

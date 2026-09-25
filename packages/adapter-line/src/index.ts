@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -567,8 +569,47 @@ export function createLineAdapter(config: LineConfig): LineAdapter {
     return Math.max(0, quota.value - (consumption.totalUsage ?? 0));
   }
 
+  // The basic id is fixed for the channel; look it up once.
+  let cachedBasicId: string | null = null;
+
+  /**
+   * `https://line.me/R/ti/p/@<basicId>` — the link behind LINE's "add friend"
+   * QR code.
+   *
+   * LINE's link format carries neither a prefilled message nor a referral
+   * payload, so both are reported as unsupported rather than quietly dropped.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!cachedBasicId) {
+      try {
+        const res = await fetch(`${apiBase()}/v2/bot/info`, {
+          headers: { authorization: `Bearer ${config.channelAccessToken}` },
+        });
+        if (!res.ok) return null;
+        const d = (await res.json().catch(() => ({}))) as { basicId?: string };
+        cachedBasicId = d.basicId ?? null;
+      } catch {
+        return null;
+      }
+    }
+    if (!cachedBasicId) return null;
+
+    // LINE returns the basic id already carrying its `@`, which the URL does
+    // not want twice.
+    const handle = cachedBasicId.startsWith('@') ? cachedBasicId.slice(1) : cachedBasicId;
+
+    return {
+      channel: 'line',
+      url: `https://line.me/R/ti/p/@${handle}`,
+      prefilled: false,
+      tracked: false,
+      target: `@${handle}`,
+    };
+  }
+
   return {
     channel: 'line',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   Attachment,
   AttachmentsConfig,
@@ -13,6 +15,7 @@ import type {
   StateStore,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 import { buildUnsubscribeHeaders } from '@msgly/core';
 
 export interface GmailConfig {
@@ -885,6 +888,9 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
       contact: {
         channel: 'gmail',
         channelUserId: from.address,
+        // On email channels the addressable id *is* the address, but set
+        // `email` too so the field is uniform across every channel.
+        email: from.address,
         ...(from.displayName ? { displayName: from.displayName } : {}),
       },
       content: { type: 'text', text: text ?? '' },
@@ -1219,12 +1225,36 @@ export function createGmailAdapter(config: GmailConfig): GmailAdapter {
     };
   }
 
+  /**
+   * `mailto:` link for an "email us" QR code or button. Scanning it opens the
+   * reader's mail client with this address filled in, and `text` as the body.
+   *
+   * Email has no referral parameter, so `ref` cannot be tracked — put it in
+   * the subject or body yourself if you need it.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    // `from` is often "Acme Support <support@acme.com>"; mailto: wants only
+    // the address inside the angle brackets.
+    const raw = config.emailAddress;
+    const address = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim();
+    if (!address.includes('@')) return null;
+
+    return {
+      channel: 'gmail',
+      url: withQuery(`mailto:${address}`, { body: options.text }),
+      prefilled: Boolean(options.text),
+      tracked: false,
+      target: address,
+    };
+  }
+
   return {
     channel: 'gmail',
     get historyId() {
       return lastHistoryId;
     },
     capabilities,
+    getChatLink,
     send,
     handleWebhook,
     verifySignature,

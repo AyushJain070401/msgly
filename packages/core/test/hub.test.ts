@@ -836,3 +836,104 @@ describe('list and cta_url capability gating', () => {
     expect(sent.replyTo).toBe('parent-123');
   });
 });
+
+describe('hub.getChatLinks', () => {
+  function linkAdapter(
+    channel: string,
+    getChatLink: Adapter['getChatLink'],
+  ): Adapter {
+    return { ...createFakeAdapter(), channel, getChatLink } as Adapter;
+  }
+
+  it('collects a link from every channel that has one', async () => {
+    const hub = createHub()
+      .register(
+        linkAdapter('whatsapp', async () => ({
+          channel: 'whatsapp',
+          url: 'https://wa.me/919876543210',
+          prefilled: false,
+          tracked: false,
+          target: '+91 98765 43210',
+        })),
+      )
+      .register(
+        linkAdapter('instagram', async () => ({
+          channel: 'instagram',
+          url: 'https://ig.me/m/rockky_2k21',
+          prefilled: false,
+          tracked: false,
+          target: 'rockky_2k21',
+        })),
+      );
+
+    const links = await hub.getChatLinks();
+
+    expect(links.map((l) => l.url)).toEqual([
+      'https://wa.me/919876543210',
+      'https://ig.me/m/rockky_2k21',
+    ]);
+  });
+
+  it('leaves out channels with no link rather than returning nulls', async () => {
+    const hub = createHub()
+      .register(linkAdapter('slack', async () => null))
+      // A push channel has no getChatLink at all.
+      .register(linkAdapter('fcm', undefined));
+
+    expect(await hub.getChatLinks()).toEqual([]);
+  });
+
+  it('passes options through to the adapter', async () => {
+    const spy = vi.fn(async () => null);
+    const hub = createHub().register(linkAdapter('telegram', spy));
+
+    await hub.getChatLinks({ ref: 'poster-42', text: 'Hi!' });
+
+    expect(spy).toHaveBeenCalledWith({ ref: 'poster-42', text: 'Hi!' });
+  });
+
+  it('one failing channel does not sink the others', async () => {
+    const errors: Error[] = [];
+    const hub = createHub()
+      .register(
+        linkAdapter('telegram', async () => {
+          throw new Error('Telegram is down');
+        }),
+      )
+      .register(
+        linkAdapter('whatsapp', async () => ({
+          channel: 'whatsapp',
+          url: 'https://wa.me/919876543210',
+          prefilled: false,
+          tracked: false,
+          target: '+919876543210',
+        })),
+      );
+    hub.on('error', (err) => errors.push(err));
+
+    const links = await hub.getChatLinks();
+
+    expect(links).toHaveLength(1);
+    expect(links[0]!.channel).toBe('whatsapp');
+    expect(errors[0]!.message).toBe('Telegram is down');
+  });
+});
+
+describe('withQuery', () => {
+  it('escapes values so a prefilled message survives the round-trip', async () => {
+    const { withQuery } = await import('../src/index.js');
+
+    expect(withQuery('https://wa.me/9198', { text: 'Hi! 50% off & free 🎉' })).toBe(
+      'https://wa.me/9198?text=Hi!%2050%25%20off%20%26%20free%20%F0%9F%8E%89',
+    );
+  });
+
+  it('drops empty values and appends to a URL that already has a query', async () => {
+    const { withQuery } = await import('../src/index.js');
+
+    expect(withQuery('sms:+919876543210', { body: undefined })).toBe('sms:+919876543210');
+    expect(withQuery('https://m.me/acme?x=1', { ref: 'poster' })).toBe(
+      'https://m.me/acme?x=1&ref=poster',
+    );
+  });
+});

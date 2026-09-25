@@ -110,6 +110,48 @@ describe('createDiscordAdapter', () => {
     expect(m.metadata?.userId).toBe('u-1');
   });
 
+  it('builds a CDN avatar URL from the interaction user, gif for animated hashes', async () => {
+    const a = createDiscordAdapter(baseConfig);
+    const base = {
+      id: 'int-2',
+      application_id: 'app-123',
+      type: 2,
+      channel_id: 'chan-9',
+      token: 'tok-abc',
+      version: 1,
+      data: { id: 'cmd-1', name: 'echo' },
+    };
+
+    const [still] = await a.handleWebhook({
+      headers: {},
+      rawBody: encode(''),
+      body: { ...base, member: { user: { id: 'u-1', username: 'udesh', avatar: 'abc123' } } },
+      query: {},
+    });
+    expect(still!.contact.avatarUrl).toBe(
+      'https://cdn.discordapp.com/avatars/u-1/abc123.png',
+    );
+    expect(still!.contact.username).toBe('udesh');
+
+    const [animated] = await a.handleWebhook({
+      headers: {},
+      rawBody: encode(''),
+      body: { ...base, member: { user: { id: 'u-1', username: 'udesh', avatar: 'a_abc123' } } },
+      query: {},
+    });
+    expect(animated!.contact.avatarUrl).toBe(
+      'https://cdn.discordapp.com/avatars/u-1/a_abc123.gif',
+    );
+
+    const [none] = await a.handleWebhook({
+      headers: {},
+      rawBody: encode(''),
+      body: { ...base, member: { user: { id: 'u-1', username: 'udesh', avatar: null } } },
+      query: {},
+    });
+    expect(none!.contact.avatarUrl).toBeUndefined();
+  });
+
   it('parses a button click into text using the custom_id', async () => {
     const a = createDiscordAdapter(baseConfig);
     const interaction = {

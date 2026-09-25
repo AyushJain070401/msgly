@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { isValidE164, withQuery } from '@msgly/core';
 
 export interface PlivoConfig {
   /** Auth ID from the Plivo console (starts with `MA` or `SA`). */
@@ -373,9 +376,34 @@ export function createPlivoAdapter(config: PlivoConfig): PlivoAdapter {
     };
   }
 
+  /**
+   * `sms:` link for a "text us" QR code. Scanning it opens the phone's SMS
+   * composer addressed to this number, with `text` prefilled.
+   *
+   * Returns null when the sender is an alphanumeric sender id rather than a
+   * real number: those can send, but nobody can reply to them, so a link would
+   * be a dead end.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    const number = config.src;
+    if (!isValidE164(number)) return null;
+
+    return {
+      channel: 'plivo',
+      // RFC 5724. `body` is the de-facto prefill parameter; iOS and Android
+      // both honour it, and a number that already carries `+` survives.
+      url: withQuery(`sms:${number}`, { body: options.text }),
+      prefilled: Boolean(options.text),
+      // SMS carries no referral payload — there is nowhere to put one.
+      tracked: false,
+      target: number,
+    };
+  }
+
   return {
     channel: 'plivo',
     capabilities: CAPABILITIES,
+    getChatLink,
     send,
     handleWebhook,
     verifySignature,

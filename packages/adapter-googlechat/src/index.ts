@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -43,6 +45,11 @@ export interface GoogleChatConfig {
   jwksUrl?: string;
   /** Allowed clock skew in seconds when validating JWT exp/nbf. Default: 300. */
   clockSkewSec?: number;
+  /**
+   * Your Chat app's Google Workspace Marketplace listing id, required by
+   * `getChatLink()`. Find it in the listing URL.
+   */
+  marketplaceAppId?: string;
 }
 
 export interface GoogleChatAdapter extends Adapter {
@@ -210,6 +217,7 @@ interface ChatUser {
   displayName?: string;
   email?: string;
   type?: string;
+  avatarUrl?: string;
 }
 
 interface ChatEvent {
@@ -387,6 +395,8 @@ export function createGoogleChatAdapter(config: GoogleChatConfig): GoogleChatAda
             channel: 'googlechat',
             channelUserId: spaceName,
             ...(sender.displayName ? { displayName: sender.displayName } : {}),
+            ...(sender.avatarUrl ? { avatarUrl: sender.avatarUrl } : {}),
+            ...(sender.email ? { email: sender.email } : {}),
           },
           content: { type: 'text', text: action },
           interaction: { id: senderId, data: action },
@@ -413,6 +423,8 @@ export function createGoogleChatAdapter(config: GoogleChatConfig): GoogleChatAda
           // The space is the conversation, so replies address the space.
           channelUserId: spaceName,
           ...(sender.displayName ? { displayName: sender.displayName } : {}),
+          ...(sender.avatarUrl ? { avatarUrl: sender.avatarUrl } : {}),
+          ...(sender.email ? { email: sender.email } : {}),
         },
         content: { type: 'text', text },
         timestamp,
@@ -623,8 +635,28 @@ export function createGoogleChatAdapter(config: GoogleChatConfig): GoogleChatAda
     );
   }
 
+  /**
+   * A link to this Chat app's install page in Google Workspace Marketplace.
+   *
+   * Google Chat has no "DM this app" URL — people add the app from the
+   * Marketplace and message it from there — so the install listing is the
+   * only thing a QR code can usefully point at. Needs `marketplaceAppId`.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.marketplaceAppId) return null;
+
+    return {
+      channel: 'googlechat',
+      url: `https://workspace.google.com/marketplace/app/_/${config.marketplaceAppId}`,
+      prefilled: false,
+      tracked: false,
+      target: config.marketplaceAppId,
+    };
+  }
+
   return {
     channel: 'googlechat',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

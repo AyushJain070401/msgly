@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   StateStore,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface RedditConfig {
   /** App client id, from reddit.com/prefs/apps. Use a **script** app. */
@@ -390,6 +393,7 @@ export function createRedditAdapter(config: RedditConfig): RedditAdapter {
           // /api/comment expects back.
           channelUserId: d.name,
           displayName: d.author,
+          ...(d.author ? { username: d.author } : {}),
         },
         content: { type: 'text', text: d.body },
         timestamp: d.created_utc
@@ -503,8 +507,31 @@ export function createRedditAdapter(config: RedditConfig): RedditAdapter {
     throw new Error('Reddit downloadMedia is not supported.');
   }
 
+  /**
+   * Reddit's compose link — `reddit.com/message/compose?to=<user>` — which
+   * opens a new DM addressed to the account this adapter posts as.
+   *
+   * `text` prefills the message body. Reddit has no referral parameter, but
+   * the subject line is yours to use for that if you need it.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.username) return null;
+
+    return {
+      channel: 'reddit',
+      url: withQuery('https://www.reddit.com/message/compose', {
+        to: config.username,
+        message: options.text,
+      }),
+      prefilled: Boolean(options.text),
+      tracked: false,
+      target: `u/${config.username}`,
+    };
+  }
+
   return {
     channel: 'reddit',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

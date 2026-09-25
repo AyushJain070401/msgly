@@ -175,9 +175,38 @@ interface ContactRef {
   channel: ChannelName;
   channelUserId: string;       // chat_id / phone number / page-scoped user id
   displayName?: string;
+  username?: string;           // platform handle, when distinct from displayName
+  avatarUrl?: string;          // profile photo, when the webhook carries one
+  email?: string;              // when the platform exposes one for the sender
   globalContactId?: string;    // your cross-channel identity if you have one
 }
 ```
+
+`avatarUrl` is filled in only for channels that put the photo in the inbound
+payload itself — Discord (built from the avatar hash), Viber, Google Chat, and
+Rocket.Chat (its stable per-username avatar path). Channels that hide it behind
+a separate profile call (Slack `users.info`, Telegram `getUserProfilePhotos`,
+Messenger/Instagram user profile, LINE `getProfile`) leave it undefined rather
+than costing an extra API request on every message — fetch it yourself from
+`metadata.userId` if you need it. Platform CDN URLs are often short-lived or
+access-controlled, so copy the image to your own storage if you need it to keep
+resolving.
+
+No Meta channel carries a photo in the webhook. WhatsApp Cloud API exposes no
+end-user profile photo at all — `contacts[].profile.name` is the whole of it.
+Messenger and Instagram send only the PSID/IGSID, but the photo is one Graph
+call away, so both adapters can fetch it for you: set `fetchSenderProfile: true`
+and every inbound message arrives with `displayName`, `avatarUrl` and (on
+Instagram) `username` filled in. It is opt-in because it costs a Graph call per
+sender; results are cached for an hour, and `adapter.getSenderProfile(id)`
+fetches one on demand instead.
+
+Every email channel (Gmail, Outlook, SMTP/IMAP, SES, SendGrid, Mailgun,
+Postmark, Resend) sets `email` — the address is also the `channelUserId` there,
+but the field is set explicitly so it means the same thing on every channel.
+None of them carry an avatar: email has no such concept. Outlook can fetch one
+from Microsoft Graph (`/users/{id}/photo/$value`), but only for senders inside
+the same tenant.
 
 ## `createHub(options?)`
 
@@ -268,6 +297,75 @@ The lower-level entry point used by `createWebhookHandler`. Useful when wiring w
 ### `hub.start()` / `hub.stop()`
 
 Calls the optional `start()`/`stop()` lifecycle hooks on every registered adapter.
+
+## Chat links and QR codes — `hub.getChatLinks(options?)`
+
+Every channel that can be reached from a link exposes one, so you can put a
+"scan to message us" QR code next to each connected account:
+
+```typescript
+const links = await hub.getChatLinks({ ref: 'diwali-poster' });
+// [
+//   { channel: 'whatsapp',  url: 'https://wa.me/919876543210',   target: '+91 98765 43210', … },
+//   { channel: 'instagram', url: 'https://ig.me/m/acme?ref=diwali-poster', target: 'acme', … },
+//   { channel: 'telegram',  url: 'https://t.me/acme_bot?start=diwali-poster', … },
+// ]
+```
+
+Render the QR yourself from `link.url` with whatever encoder you already use —
+this library ships no image dependency, and the same URL works as a plain link
+or a button.
+
+`options.text` prefills the first message where the channel allows it, and
+`options.ref` is a tracking payload handed back to you on the first inbound
+message. Neither is universal, so each link reports what actually happened via
+`prefilled` and `tracked` rather than quietly dropping them:
+
+| Channel | Link | Prefill | Ref |
+| --- | --- | --- | --- |
+| WhatsApp | `wa.me/<number>` | ✅ | — |
+| Messenger | `m.me/<page>` | — | ✅ `referral` event |
+| Instagram | `ig.me/m/<handle>` | — | ✅ `referral` event |
+| Telegram | `t.me/<bot>` | — | ✅ `/start <ref>` |
+| LINE | `line.me/R/ti/p/@<id>` | — | — |
+| Viber | `viber://pa?chatURI=…` | ✅ | — |
+| WeChat | QR ticket (see below) | — | ✅ scene id |
+| Teams | `teams.microsoft.com/l/chat/…` | ✅ | — |
+| Slack | `slack.com/app_redirect?app=…` | — | — |
+| Discord | bot install link | — | — |
+| Reddit | `reddit.com/message/compose?to=…` | ✅ | — |
+| Mattermost / Rocket.Chat | your server's DM URL | — | — |
+| Google Chat | Marketplace listing | — | — |
+| TikTok | profile URL | — | — |
+| SMS (Twilio, Plivo, Vonage, Telnyx, Genesys) | `sms:<number>` | ✅ | — |
+| Email (all eight) | `mailto:<address>` | ✅ | — |
+
+Some channels need one config field before they can produce a link, because the
+handle is not derivable from the credentials: Slack `appId`, Viber
+`publicAccountUri`, Mattermost `teamName`, TikTok `username`, Google Chat
+`marketplaceAppId`. Without it `getChatLink()` returns `null` and the channel is
+simply left out of `getChatLinks()`.
+
+Three channels are shaped differently, and it is worth knowing which:
+
+- **WeChat** has no shareable URL at all. It mints the code server-side and
+  returns a ticket, so the link carries `qrImageUrl` — display WeChat's own
+  image rather than encoding anything yourself.
+- **Discord** has no "DM this bot" URL: a bot is reachable only once it is in a
+  server, so the link is the install one.
+- **Google Chat and TikTok** point at an install listing and a profile
+  respectively, because neither platform has a direct-message deep link.
+
+Channels with no such concept omit the method entirely rather than returning
+null: push (APNs, FCM, Web Push, Expo) delivers to a device token nobody can
+scan their way into, and voice channels place calls rather than open
+conversations.
+
+A single adapter is the same call:
+
+```typescript
+const link = await hub.getAdapter('whatsapp').getChatLink?.({ text: 'Hi!' });
+```
 
 ## Campaigns — `hub.sendBulk(options)`
 

@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface SlackConfig {
   /** Bot token starting with xoxb-. Required for all API calls. */
@@ -18,6 +21,11 @@ export interface SlackConfig {
   signingSecret: string;
   /** Override for tests. Defaults to https://slack.com/api. */
   apiBase?: string;
+  /**
+   * Your Slack app id, from the dashboard URL `api.slack.com/apps/<appId>`.
+   * Required by `getChatLink()` — `auth.test` never returns it.
+   */
+  appId?: string;
 }
 
 export interface SlackAdapter extends Adapter {
@@ -567,8 +575,29 @@ export function createSlackAdapter(config: SlackConfig): SlackAdapter {
     }
   }
 
+  /**
+   * `https://slack.com/app_redirect?app=<appId>` — opens this app's DM tab in
+   * the installing workspace.
+   *
+   * Needs `appId`: Slack's `auth.test` returns the bot and team, never the app
+   * id, so it has to come from the config. Find it in your app's dashboard
+   * URL (`api.slack.com/apps/<appId>`).
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.appId) return null;
+
+    return {
+      channel: 'slack',
+      url: withQuery('https://slack.com/app_redirect', { app: config.appId }),
+      prefilled: false,
+      tracked: false,
+      target: config.appId,
+    };
+  }
+
   return {
     channel: 'slack',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

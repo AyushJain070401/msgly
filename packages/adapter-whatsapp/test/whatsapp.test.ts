@@ -1002,3 +1002,60 @@ describe('coexistence', () => {
     ]);
   });
 });
+
+describe('getChatLink', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('looks the number up once and strips it down to wa.me digits', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      calls.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ display_phone_number: '+91 98765 43210' }),
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createWhatsAppAdapter(config);
+    const link = await a.getChatLink!();
+
+    expect(link!.url).toBe('https://wa.me/919876543210');
+    // The human-readable form is kept for display next to the QR.
+    expect(link!.target).toBe('+91 98765 43210');
+
+    await a.getChatLink!();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('skips the lookup when the number is configured, and prefills text', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      calls.push(url);
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const a = createWhatsAppAdapter({ ...config, displayPhoneNumber: '+919876543210' });
+    const link = await a.getChatLink!({ text: 'Hi! I saw your poster' });
+
+    expect(link!.url).toBe('https://wa.me/919876543210?text=Hi!%20I%20saw%20your%20poster');
+    expect(link!.prefilled).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('returns null rather than throwing when the number cannot be resolved', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'still in review' } }),
+    })) as unknown as typeof fetch;
+
+    const a = createWhatsAppAdapter(config);
+
+    expect(await a.getChatLink!()).toBeNull();
+  });
+});

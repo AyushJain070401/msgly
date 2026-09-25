@@ -31,6 +31,21 @@ export interface MessengerAdapter extends Adapter {
     /** Publishes a photo post instead; Facebook fetches the URL server-side. */
     photoUrl?: string;
   }): Promise<{ id: string }>;
+  /**
+   * Fetch one sender's profile — name, photo, and on Instagram the handle —
+   * from the Graph API, cached. Set `fetchSenderProfile` in the config to have
+   * every inbound message carry it on `contact` instead.
+   */
+  getSenderProfile(
+    senderId: string,
+  ): Promise<import('./meta-base.js').MetaSenderProfile | null>;
+  /**
+   * Build the link that starts a chat with this account — `m.me/<page>` or
+   * `ig.me/m/<handle>` — which is what a "message us" QR code encodes.
+   */
+  getChatLink(
+    options?: import('@msgly/core').ChatLinkOptions,
+  ): Promise<import('@msgly/core').ChatLink | null>;
 }
 
 const CAPABILITIES: AdapterCapabilities = {
@@ -124,4 +139,4 @@ export function createMessengerAdapter(config: MessengerConfig): MessengerAdapte
 }
 
 export { createMetaGraphBase } from './meta-base.js';
-export type { MetaGraphConfig, MetaGraphBase } from './meta-base.js';
+export type { MetaGraphConfig, MetaGraphBase, MetaSenderProfile } from './meta-base.js';

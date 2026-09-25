@@ -66,6 +66,26 @@ export interface ContactRef {
   channel: ChannelName;
   /** Optional human-readable name from the platform. */
   displayName?: string;
+  /**
+   * Optional handle from the platform, when it is distinct from `displayName`
+   * (Discord `username`, Mattermost `user_name`).
+   */
+  username?: string;
+  /**
+   * Optional profile photo URL, when the inbound payload carries one.
+   *
+   * Only populated for channels that put it in the webhook itself (Discord,
+   * Viber, Google Chat). Channels that hide it behind a separate profile call
+   * (Slack `users.info`, Telegram `getUserProfilePhotos`, Messenger/Instagram
+   * user profile, LINE `getProfile`) leave it undefined rather than making an
+   * extra API request per message.
+   *
+   * Platform CDN URLs are usually short-lived or access-controlled — copy the
+   * image to your own storage if you need it to keep resolving.
+   */
+  avatarUrl?: string;
+  /** Optional email address, when the platform exposes one for the sender. */
+  email?: string;
   /** Optional global identity if you've resolved the same person across channels. */
   globalContactId?: string;
 }

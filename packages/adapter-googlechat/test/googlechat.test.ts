@@ -311,6 +311,30 @@ describe('createGoogleChatAdapter', () => {
     expect(m.timestamp).toBe('2026-01-01T10:00:00.000Z');
   });
 
+  it('carries the sender avatar and email through to the contact', async () => {
+    const a = createGoogleChatAdapter(baseConfig);
+    const [m] = await a.handleWebhook(
+      webhook({
+        type: 'MESSAGE',
+        space: { name: 'spaces/AAA' },
+        message: {
+          name: 'spaces/AAA/messages/M2',
+          text: 'hello',
+          sender: {
+            name: 'users/123',
+            displayName: 'Alice',
+            type: 'HUMAN',
+            email: 'alice@acme.com',
+            avatarUrl: 'https://lh3.googleusercontent.com/alice',
+          },
+        },
+      }),
+    );
+
+    expect(m!.contact.avatarUrl).toBe('https://lh3.googleusercontent.com/alice');
+    expect(m!.contact.email).toBe('alice@acme.com');
+  });
+
   it('surfaces CARD_CLICKED as an interaction', async () => {
     const a = createGoogleChatAdapter(baseConfig);
     const [m] = await a.handleWebhook(

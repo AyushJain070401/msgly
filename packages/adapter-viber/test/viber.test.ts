@@ -233,6 +233,20 @@ describe('createViberAdapter', () => {
     expect(m.timestamp).toBe(new Date(1767261600000).toISOString());
   });
 
+  it('carries the sender avatar through to the contact', async () => {
+    const a = createViberAdapter(baseConfig);
+    const [m] = await a.handleWebhook(
+      webhook({
+        event: 'message',
+        message_token: 9912,
+        sender: { id: 'user-abc', name: 'Alice', avatar: 'https://cdn.viber.com/a.jpg' },
+        message: { type: 'text', text: 'hi' },
+      }),
+    );
+
+    expect(m!.contact.avatarUrl).toBe('https://cdn.viber.com/a.jpg');
+  });
+
   it('parses inbound picture, file and location messages', async () => {
     const a = createViberAdapter(baseConfig);
     const base = { event: 'message', sender: { id: 'u1' }, message_token: 1 };
@@ -418,5 +432,23 @@ describe('broadcast', () => {
       text: 'x',
     });
     expect(receipt.error?.code).toBe('viber_no_recipients');
+  });
+});
+
+describe('getChatLink', () => {
+  it('returns null without a chat URI, which the token cannot supply', async () => {
+    const a = createViberAdapter(baseConfig);
+
+    expect(await a.getChatLink!()).toBeNull();
+  });
+
+  it('gives the native scheme plus an https fallback for desktop', async () => {
+    const a = createViberAdapter({ ...baseConfig, publicAccountUri: 'acmesupport' });
+
+    const link = await a.getChatLink!({ text: 'Hi there' });
+
+    expect(link!.url).toBe('viber://pa?chatURI=acmesupport&text=Hi%20there');
+    expect(link!.webUrl).toBe('https://viber.me/acmesupport');
+    expect(link!.prefilled).toBe(true);
   });
 });

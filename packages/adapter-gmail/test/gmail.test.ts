@@ -128,6 +128,7 @@ describe('createGmailAdapter', () => {
     expect((m.content as { text: string }).text).toBe('hi from email');
     expect(m.contact.channelUserId).toBe('alice@example.com');
     expect(m.contact.displayName).toBe('Alice');
+    expect(m.contact.email).toBe('alice@example.com');
     expect(m.metadata?.threadId).toBe('thread-1');
     expect(m.metadata?.messageId).toBe('<abc@example.com>');
     expect(m.metadata?.subject).toBe('Hello agent');
@@ -651,5 +652,17 @@ describe('List-Unsubscribe', () => {
     const decoded = decode(captured.body!.raw as string);
     expect(decoded).not.toContain('Bcc: evil@x.com\r\n');
     expect(decoded).toContain('List-Unsubscribe: <https://acme.com/uBcc: evil@x.com>');
+  });
+});
+
+describe('getChatLink', () => {
+  it('builds a mailto: link with the body prefilled', async () => {
+    const a = createGmailAdapter(baseConfig);
+
+    const link = await a.getChatLink!({ text: 'Hello!' });
+
+    expect(link!.url).toBe('mailto:agent@acme.com?body=Hello!');
+    expect(link!.target).toBe('agent@acme.com');
+    expect(link!.tracked).toBe(false);
   });
 });

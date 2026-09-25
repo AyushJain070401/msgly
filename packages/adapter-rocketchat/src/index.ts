@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -174,7 +176,15 @@ export function createRocketChatAdapter(
           channel: 'rocketchat',
           // The room is the conversation, so replies address the room.
           channelUserId: roomId,
-          ...(userName ? { displayName: userName } : {}),
+          ...(userName
+            ? {
+                displayName: userName,
+                username: userName,
+                // Rocket.Chat's outgoing webhook carries no avatar, but the
+                // server serves one per username at a stable path.
+                avatarUrl: `${config.serverUrl.replace(/\/+$/, '')}/avatar/${encodeURIComponent(userName)}`,
+              }
+            : {}),
         },
         content: { type: 'text', text },
         timestamp,
@@ -536,8 +546,39 @@ export function createRocketChatAdapter(
     }
   }
 
+  // The bot's own username, resolved once from the token.
+  let cachedBotUsername: string | null = null;
+
+  /**
+   * `<serverUrl>/direct/<bot>` — the link that opens a DM with this bot on
+   * your Rocket.Chat server.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!cachedBotUsername) {
+      try {
+        const res = await fetch(`${apiBase}/me`, { headers: authHeaders() });
+        if (!res.ok) return null;
+        const d = (await res.json().catch(() => ({}))) as { username?: string };
+        cachedBotUsername = d.username ?? null;
+      } catch {
+        return null;
+      }
+    }
+    if (!cachedBotUsername) return null;
+
+    const root = config.serverUrl.replace(/\/+$/, '');
+    return {
+      channel: 'rocketchat',
+      url: `${root}/direct/${cachedBotUsername}`,
+      prefilled: false,
+      tracked: false,
+      target: `@${cachedBotUsername}`,
+    };
+  }
+
   return {
     channel: 'rocketchat',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

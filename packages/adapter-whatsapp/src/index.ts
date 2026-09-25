@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -11,8 +13,15 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface WhatsAppConfig {
+  /**
+   * The number people dial, in E.164 (`+919876543210`). Optional: without it
+   * `getChatLink()` looks it up from the Graph API once and caches it. Set it
+   * to skip that call.
+   */
+  displayPhoneNumber?: string;
   /** WhatsApp Business Phone Number ID (numeric, from Meta dashboard). */
   phoneNumberId: string;
   /** Meta WhatsApp Business access token. */
@@ -1064,6 +1073,9 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
               channel: 'whatsapp',
               channelUserId: m.from,
               ...(profileName ? { displayName: profileName } : {}),
+              // WhatsApp gives `contacts[].profile.name` and nothing else —
+              // the Cloud API exposes no end-user profile photo at all.
+
             },
             content,
             timestamp: new Date(Number(m.timestamp) * 1000).toISOString(),
@@ -1938,9 +1950,57 @@ export function createWhatsAppAdapter(config: WhatsAppConfig): WhatsAppAdapter {
     return { ok: true };
   }
 
+  // ---------- Chat link ----------
+
+  // Looked up once: the number behind a phone number id never changes.
+  let cachedChatNumber: string | null = null;
+
+  /**
+   * `https://wa.me/<number>` — the link behind a "message us on WhatsApp" QR
+   * code. Works on desktop (web.whatsapp.com) and opens the app on a phone.
+   *
+   * Returns null when the number cannot be resolved, which in practice means
+   * a phone number id that is still in review.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!cachedChatNumber) {
+      const configured = config.displayPhoneNumber;
+      if (configured) {
+        cachedChatNumber = configured;
+      } else {
+        try {
+          const res = await graphFetch(
+            `/${config.phoneNumberId}?fields=display_phone_number`,
+          );
+          const data = await assertOk(res, 'getChatLink');
+          cachedChatNumber = (data['display_phone_number'] as string | undefined) ?? null;
+        } catch {
+          // A link is a convenience; never let it throw at the caller.
+          return null;
+        }
+      }
+    }
+
+    // wa.me wants bare digits — no `+`, spaces or dashes, which is how Meta
+    // returns it (`+91 98765 43210`).
+    const digits = (cachedChatNumber ?? '').replace(/\D/g, '');
+    if (!digits) return null;
+
+    return {
+      channel: 'whatsapp',
+      url: withQuery(`https://wa.me/${digits}`, { text: options.text }),
+      prefilled: Boolean(options.text),
+      // wa.me has no referral parameter. Encode a campaign id in `text` if you
+      // need to tell posters apart.
+      tracked: false,
+      target: cachedChatNumber ?? digits,
+    };
+  }
+
   return {
     channel: 'whatsapp',
     capabilities: CAPABILITIES,
+    getChatLink,
     // Meta fixes dual-platform numbers at 20 mps regardless of tier, so the
     // hub must pace to that rather than the API-only default.
     ...(config.coexistence ? { rateLimit: { perSecond: 20 } } : {}),

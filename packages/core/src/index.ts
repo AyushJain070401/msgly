@@ -7,3 +7,4 @@ export * from './campaign.js';
 export * from './suppression.js';
 export * from './hub.js';
 export * from './phone.js';
+export * from './chat-link.js';

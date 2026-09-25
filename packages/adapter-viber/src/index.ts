@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -11,12 +13,19 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface ViberConfig {
   /** Auth token from the Viber admin panel. Also the webhook signing key. */
   authToken: string;
   /** Name shown as the sender, max 28 characters. */
   senderName: string;
+  /**
+   * Your Viber public account's chat URI — the vanity string from the admin
+   * panel, e.g. `acmesupport` for `viber://pa?chatURI=acmesupport`. Required
+   * by `getChatLink()`; it cannot be derived from the auth token.
+   */
+  publicAccountUri?: string;
   /** Optional avatar URL for the sender (max 100 KB, ideally 720×720). */
   senderAvatar?: string;
   /** Override the API base. Default: `https://chatapi.viber.com`. */
@@ -262,6 +271,7 @@ export function createViberAdapter(config: ViberConfig): ViberAdapter {
           channel: 'viber',
           channelUserId: senderId,
           ...(event.sender?.name ? { displayName: event.sender.name } : {}),
+          ...(event.sender?.avatar ? { avatarUrl: event.sender.avatar } : {}),
         },
         content,
         timestamp,
@@ -578,8 +588,31 @@ export function createViberAdapter(config: ViberConfig): ViberAdapter {
     };
   }
 
+  /**
+   * `viber://pa?chatURI=<uri>` — the link behind a Viber "chat with us" QR
+   * code, plus the `https://viber.me` equivalent for desktop browsers.
+   *
+   * Needs `publicAccountUri`: Viber's chat URI is the vanity string you picked
+   * in the admin panel, and it is not derivable from the auth token, so
+   * without it there is no link to give.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    const uri = config.publicAccountUri?.replace(/^@/, '').trim();
+    if (!uri) return null;
+
+    return {
+      channel: 'viber',
+      url: withQuery(`viber://pa`, { chatURI: uri, text: options.text }),
+      webUrl: `https://viber.me/${uri}`,
+      prefilled: Boolean(options.text),
+      tracked: false,
+      target: uri,
+    };
+  }
+
   return {
     channel: 'viber',
+    getChatLink,
     capabilities: CAPABILITIES,
     broadcast,
     send,

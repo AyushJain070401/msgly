@@ -1,3 +1,4 @@
+import type { ChatLink, ChatLinkOptions } from './chat-link.js';
 import type {
   ChannelName,
   ContactRef,
@@ -157,6 +158,22 @@ export interface Adapter {
     externalMessageId: string,
     emoji: string,
   ): Promise<void>;
+
+  /**
+   * Build a link that starts a conversation with this account — `wa.me/…`,
+   * `ig.me/m/…`, `t.me/…` — which is what a "scan to chat" QR code encodes.
+   *
+   * Returns `null` when the account is not reachable this way: a WhatsApp
+   * number still in review, a Facebook Page with no username, a config missing
+   * the public handle the channel needs. Callers should guard:
+   * `await adapter.getChatLink?.()`.
+   *
+   * Optional, and genuinely absent on channels where no such link exists —
+   * push (APNs, FCM, Web Push, Expo) delivers to a device token nobody can
+   * scan their way into, and voice channels place calls rather than open
+   * conversations.
+   */
+  getChatLink?(options?: ChatLinkOptions): Promise<ChatLink | null>;
 
   /** Optional lifecycle hook — e.g. start long polling, register webhooks. */
   start?(): Promise<void>;

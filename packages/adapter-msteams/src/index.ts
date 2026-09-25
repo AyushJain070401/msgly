@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -10,6 +12,7 @@ import type {
   OutboundMessage,
   WebhookRequest,
 } from '@msgly/core';
+import { withQuery } from '@msgly/core';
 
 export interface MsTeamsConfig {
   /** Microsoft App ID (GUID) from Azure Bot resource → Configuration. */
@@ -723,8 +726,33 @@ export function createMsTeamsAdapter(config: MsTeamsConfig): MsTeamsAdapter {
     }
   }
 
+  /**
+   * `https://teams.microsoft.com/l/chat/0/0?users=28:<appId>` — the deep link
+   * that opens a Teams chat with this bot, which is what a QR code for it
+   * encodes.
+   *
+   * Teams supports a prefilled first message through `message`, and has no
+   * referral payload.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.appId) return null;
+
+    return {
+      channel: 'msteams',
+      // `28:` is Teams' prefix for a bot id, as opposed to a person's.
+      url: withQuery('https://teams.microsoft.com/l/chat/0/0', {
+        users: `28:${config.appId}`,
+        message: options.text,
+      }),
+      prefilled: Boolean(options.text),
+      tracked: false,
+      target: config.appId,
+    };
+  }
+
   return {
     channel: 'msteams',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

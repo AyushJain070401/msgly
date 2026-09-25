@@ -1,5 +1,7 @@
 import type {
   Adapter,
+  ChatLink,
+  ChatLinkOptions,
   AdapterCapabilities,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -37,6 +39,11 @@ export interface MattermostConfig {
    * seen inbound traffic from.
    */
   defaultChannelId?: string;
+  /**
+   * Team name as it appears in Mattermost URLs (`/acme/channels/town-square`
+   * → `acme`). Required by `getChatLink()`, which scopes DM links to a team.
+   */
+  teamName?: string;
 }
 
 export interface MattermostAdapter extends Adapter {
@@ -186,7 +193,9 @@ export function createMattermostAdapter(config: MattermostConfig): MattermostAda
           channel: 'mattermost',
           // Replies go to the channel, so that is the addressable id.
           channelUserId: channelId,
-          ...(fields['user_name'] ? { displayName: fields['user_name'] } : {}),
+          ...(fields['user_name']
+            ? { displayName: fields['user_name'], username: fields['user_name'] }
+            : {}),
         },
         content: { type: 'text', text },
         timestamp,
@@ -539,8 +548,44 @@ export function createMattermostAdapter(config: MattermostConfig): MattermostAda
     }
   }
 
+  // The bot's own username, resolved once from the token.
+  let cachedBotUsername: string | null = null;
+
+  /**
+   * `<serverUrl>/<team>/messages/@<bot>` — the link that opens a DM with this
+   * bot on your Mattermost server.
+   *
+   * Needs `teamName`, because Mattermost scopes DM links to a team and the
+   * token alone does not say which one you mean.
+   */
+  async function getChatLink(_options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    if (!config.teamName) return null;
+
+    if (!cachedBotUsername) {
+      try {
+        const res = await fetch(`${apiBase}/users/me`, { headers: authHeaders() });
+        if (!res.ok) return null;
+        const d = (await res.json().catch(() => ({}))) as { username?: string };
+        cachedBotUsername = d.username ?? null;
+      } catch {
+        return null;
+      }
+    }
+    if (!cachedBotUsername) return null;
+
+    const root = config.serverUrl.replace(/\/+$/, '');
+    return {
+      channel: 'mattermost',
+      url: `${root}/${config.teamName}/messages/@${cachedBotUsername}`,
+      prefilled: false,
+      tracked: false,
+      target: `@${cachedBotUsername}`,
+    };
+  }
+
   return {
     channel: 'mattermost',
+    getChatLink,
     capabilities: CAPABILITIES,
     send,
     handleWebhook,

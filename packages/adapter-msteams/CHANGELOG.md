@@ -1,5 +1,12 @@
 # @msgly/msteams
 
+## 1.12.0
+
+### Patch Changes
+
+- Updated dependencies [48807cc]
+  - @msgly/core@1.12.0
+
 ## 1.11.0
 
 ### Minor Changes

@@ -1,7 +1,7 @@
 {
   "name": "@msgly/gmail",
-  "version": "1.11.0",
-  "description": "Gmail adapter for Msgly \u2014 receive and reply to emails via Gmail API + Pub/Sub push",
+  "version": "1.12.0",
+  "description": "Gmail adapter for Msgly — receive and reply to emails via Gmail API + Pub/Sub push",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",

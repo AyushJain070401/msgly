@@ -1,9 +1,15 @@
 name: CI
 
+# Pull requests only. `pull_request` already tests the merge of the branch into
+# main, so the push that lands it is the same tree a second time — merging a
+# green PR used to spend another full matrix proving what CI had just proved.
+#
+# Main is still verified: the Release workflow runs the same build, typecheck,
+# lint and test on every push to it before it is allowed to publish.
 on:
-  push:
-    branches: [main]
   pull_request:
+  # Kept so a run can be triggered by hand against any branch.
+  workflow_dispatch:
 
 # A newer push to the same branch makes an in-flight run redundant.
 concurrency:

@@ -40,6 +40,32 @@ Leaving `publicKey` unset makes `verifySignature` return `true` for everything.
 Telnyx fetches media itself, so pass a public URL. A `platform-id` reference
 fails fast with a clear message instead of a confusing API error.
 
+## Checking the sender
+
+`verifyCredentials()` validates `from` as well as the API key, so a wrong sender
+is caught where it was typed rather than on the first send. The check is also
+exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+For a number it first checks the value is valid E.164 — naming the actual
+mistake, such as a missing `+` or leftover dashes — then looks it up with
+`GET /v2/phone_numbers?filter[phone_number]=…`, which also catches a valid
+number belonging to a *different* Telnyx account.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters: a key without number-read permission can't answer the ownership
+question, so the check reports `ok: true` with `inconclusive` rather than calling
+a working number invalid. Only `not_owned` and `malformed` fail.
+
+**An alphanumeric sender ID is always `inconclusive`.** It is registered with the
+destination carrier rather than bought on your account, so there is nothing to
+look it up against. Telnyx also requires a messaging profile for one — set
+`messagingProfileId` if you have not.
+
 ## License
 
 MIT

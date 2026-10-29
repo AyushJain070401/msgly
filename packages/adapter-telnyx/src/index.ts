@@ -10,9 +10,16 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
-import { isValidE164, withQuery } from '@msgly/core';
+import {
+  describeE164Problem,
+  isAlphanumericSenderId,
+  isValidE164,
+  sameNumber,
+  withQuery,
+} from '@msgly/core';
 
 export interface TelnyxConfig {
   /** API key from portal.telnyx.com → API Keys (starts with `KEY`). */
@@ -43,6 +50,14 @@ export interface TelnyxConfig {
 
 export interface TelnyxAdapter extends Adapter {
   readonly channel: 'telnyx';
+  /**
+   * Check that `from` is usable on this account.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for
+   * free. It is exposed separately for the case where the sender is changed
+   * on an already-connected account.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
 }
 
 const DEFAULT_API_BASE = 'https://api.telnyx.com';
@@ -317,6 +332,98 @@ export function createTelnyxAdapter(config: TelnyxConfig): TelnyxAdapter {
     };
   }
 
+  /**
+   * Ask Telnyx whether `from` is a number on this account.
+   *
+   * `GET /v2/phone_numbers` filtered to this number. The filter means the
+   * response is the answer: one entry if the number is on the account, none if
+   * it is not. The comparison is still on digits, since the filter is matched
+   * by Telnyx rather than guaranteed to echo the value back verbatim.
+   *
+   * `owned: null` means the question could not be answered — a key without
+   * permission to list numbers, or a network failure. That is reported as
+   * inconclusive rather than as a bad number.
+   */
+  async function checkNumberOwnership(): Promise<{
+    owned: boolean | null;
+    reason?: string;
+    known?: string[];
+  }> {
+    try {
+      const res = await fetch(
+        `${apiBase}/v2/phone_numbers?filter[phone_number]=${encodeURIComponent(config.from)}&page[size]=20`,
+        { headers: { authorization: `Bearer ${config.apiKey}` } },
+      );
+      if (!res.ok) {
+        return { owned: null, reason: `number lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json().catch(() => ({}))) as {
+        data?: Array<{ phone_number?: string }>;
+      };
+      const list = body.data;
+      if (!Array.isArray(list)) {
+        return { owned: null, reason: 'unexpected number lookup response' };
+      }
+      const known = list
+        .map((n) => n.phone_number)
+        .filter((n): n is string => typeof n === 'string' && n !== '');
+      return known.some((n) => sameNumber(n, config.from))
+        ? { owned: true }
+        : { owned: false, known };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    // An alphanumeric sender is registered with the destination carrier rather
+    // than bought on the account, so there is nothing to look it up against —
+    // and failing the E.164 gate on one would reject a valid configuration.
+    if (isAlphanumericSenderId(config.from)) {
+      return {
+        ok: true,
+        status: 'inconclusive',
+        phoneNumber: config.from,
+        hint: `"${config.from}" is an alphanumeric sender ID, which is registered with the destination carrier rather than rented on your Telnyx account — it cannot be verified here. Telnyx requires a messaging profile for alphanumeric senders — set messagingProfileId if you have not.`,
+      };
+    }
+
+    const problem = describeE164Problem(config.from);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.from,
+        hint: `TelnyxConfig.from ${problem}. It takes a Telnyx number in E.164, or an alphanumeric sender ID of up to 11 characters.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.from };
+    }
+    if (ownership.owned === false) {
+      const known = ownership.known ?? [];
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.from,
+        hint: `${config.from} is not a number on this Telnyx account. Check it at portal.telnyx.com → Numbers → My Numbers.${
+          known.length > 0 ? ` This account has: ${known.slice(0, 5).join(', ')}.` : ''
+        }`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.from,
+      hint: `${config.from} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.apiKey) {
       return {
@@ -342,6 +449,19 @@ export function createTelnyxAdapter(config: TelnyxConfig): TelnyxAdapter {
         return { ok: false, reason: 'unknown', hint: `Telnyx returned HTTP ${res.status}.` };
       }
 
+      // The credentials are good; now confirm the sender is actually usable.
+      // A well-formed number on a different Telnyx account passes the format
+      // gate but fails every send.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint:
+            numberCheck.hint ??
+            `The configured sender is not usable (${numberCheck.status}).`,
+        };
+      }
       return { ok: true, accountInfo: `Telnyx (from: ${config.from})` };
     } catch (err) {
       return {
@@ -398,6 +518,7 @@ export function createTelnyxAdapter(config: TelnyxConfig): TelnyxAdapter {
     channel: 'telnyx',
     capabilities: CAPABILITIES,
     getChatLink,
+    verifyPhoneNumber,
     send,
     handleWebhook,
     verifySignature,

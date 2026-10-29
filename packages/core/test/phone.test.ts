@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeE164Problem, isValidE164 } from '../src/index.js';
+import {
+  describeE164Problem,
+  isAlphanumericSenderId,
+  isValidE164,
+  phoneDigits,
+  sameNumber,
+} from '../src/index.js';
 
 describe('isValidE164', () => {
   it('accepts well-formed international numbers', () => {
@@ -79,5 +85,60 @@ describe('describeE164Problem does not misdiagnose', () => {
 
   it('still reports a genuinely over-long number', () => {
     expect(describeE164Problem('+12345678901234567')).toContain('too long');
+  });
+});
+
+describe('phoneDigits', () => {
+  it('strips the "+" and every separator', () => {
+    expect(phoneDigits('+1 (415) 555-1212')).toBe('14155551212');
+  });
+
+  it('returns an empty string for a missing value', () => {
+    expect(phoneDigits(undefined)).toBe('');
+    expect(phoneDigits(null)).toBe('');
+    expect(phoneDigits('ACMECO')).toBe('');
+  });
+});
+
+describe('sameNumber', () => {
+  it('matches the same number written with and without the "+"', () => {
+    expect(sameNumber('+14155551212', '14155551212')).toBe(true);
+  });
+
+  it('matches through separators', () => {
+    expect(sameNumber('+14155551212', '(415) 555-1212'.replace(/^/, '1'))).toBe(true);
+  });
+
+  it('does not match two different numbers', () => {
+    expect(sameNumber('+14155551212', '+14155551213')).toBe(false);
+  });
+
+  it('never matches when either side is empty', () => {
+    expect(sameNumber('', '')).toBe(false);
+    expect(sameNumber('+14155551212', undefined)).toBe(false);
+    expect(sameNumber('ACMECO', 'ACMECO')).toBe(false);
+  });
+});
+
+describe('isAlphanumericSenderId', () => {
+  it('accepts a DLT-style header', () => {
+    expect(isAlphanumericSenderId('ACMECO')).toBe(true);
+  });
+
+  it('accepts the 11-character carrier maximum and rejects one more', () => {
+    expect(isAlphanumericSenderId('ACMECOMPANY')).toBe(true);
+    expect(isAlphanumericSenderId('ACMECOMPANY1')).toBe(false);
+  });
+
+  it('rejects a number, mistyped or not — those are not sender ids', () => {
+    expect(isAlphanumericSenderId('+14155551212')).toBe(false);
+    expect(isAlphanumericSenderId('14155551212')).toBe(false);
+    expect(isAlphanumericSenderId('4155551212')).toBe(false);
+  });
+
+  it('rejects an empty value and one with punctuation a carrier would not take', () => {
+    expect(isAlphanumericSenderId('')).toBe(false);
+    expect(isAlphanumericSenderId('  ')).toBe(false);
+    expect(isAlphanumericSenderId('ACME!')).toBe(false);
   });
 });

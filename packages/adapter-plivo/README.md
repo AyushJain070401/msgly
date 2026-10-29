@@ -58,6 +58,34 @@ content: {
 Passing a `platform-id` ref fails fast with a clear error rather than a confusing
 API rejection, since Plivo has no media upload endpoint.
 
+## Checking the sender
+
+`verifyCredentials()` validates `src` as well as the auth ID and token, so a
+wrong sender is caught where it was typed rather than on the first send. The
+check is also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+For a number it first checks the value is valid E.164 — naming the actual
+mistake, such as a missing `+` or leftover dashes — then asks Plivo whether the
+number is rented on this account, which also catches a valid number belonging to
+a *different* Plivo account. Plivo returns its numbers without a leading `+`, so
+the comparison is on digits and either form matches.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters: a subaccount token that cannot list numbers can't answer the ownership
+question, so the check reports `ok: true` with `inconclusive` rather than calling
+a working number invalid. Only `not_owned` and `malformed` fail.
+
+**An alphanumeric sender ID is always `inconclusive`.** It is registered with the
+destination carrier rather than rented on your account, so there is nothing to
+look it up against — and running the E.164 gate on one would reject a valid
+configuration. The hint notes that recipients cannot reply to it and that several
+countries, the US and Canada among them, reject it outright.
+
 ## License
 
 MIT

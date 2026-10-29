@@ -310,3 +310,44 @@ describe('verifyCredentials', () => {
     if (!result.ok) expect(result.hint).toContain('vonage-sms');
   });
 });
+
+describe('createVonageVoiceAdapter verifyPhoneNumber', () => {
+  it('accepts the bare-digit form Vonage Voice wants, without a lookup', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // Vonage lists rented numbers under the account api_key/api_secret pair,
+    // which a Voice application JWT cannot read — so a well-formed number is
+    // reported as unconfirmed rather than guessed at.
+    const result = await createVonageVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a number that carries a "+" anyway', async () => {
+    const result = await createVonageVoiceAdapter({
+      ...config,
+      phoneNumber: '+15551234567',
+    }).verifyPhoneNumber();
+    expect(result.ok).toBe(true);
+    expect(result.status).not.toBe('malformed');
+  });
+
+  it('rejects a number too short to be E.164 and says what Vonage wants', async () => {
+    const result = await createVonageVoiceAdapter({
+      ...config,
+      phoneNumber: '5551',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('without a leading "+"');
+  });
+
+  it('rejects a missing number', async () => {
+    const result = await createVonageVoiceAdapter({
+      ...config,
+      phoneNumber: '',
+    }).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+  });
+});

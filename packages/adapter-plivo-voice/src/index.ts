@@ -9,8 +9,10 @@ import type {
   MediaReference,
   MessageContent,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
+import { describeE164Problem, sameNumber } from '@msgly/core';
 
 export interface PlivoVoiceConfig {
   /** Plivo Auth ID, from the console dashboard. */
@@ -51,6 +53,14 @@ export interface PlivoVoiceConfig {
 
 export interface PlivoVoiceAdapter extends Adapter {
   readonly channel: 'plivo-voice';
+  /**
+   * Check that `phoneNumber` is a voice-capable number on this account.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for free.
+   * It is exposed separately for the case where the number is changed on an
+   * already-connected account.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
   /** Place an outbound call, answered by `answerUrl` (or the configured webhook). */
   initiateCall(to: string, options?: { answerUrl?: string; from?: string }): Promise<{ callUuid: string }>;
   /** Change a call already in progress. */
@@ -446,6 +456,85 @@ export function createPlivoVoiceAdapter(config: PlivoVoiceConfig): PlivoVoiceAda
     });
   }
 
+  /**
+   * Ask Plivo whether `phoneNumber` is a number on this account.
+   *
+   * `GET /v1/Account/{auth_id}/Number/` lists the rented numbers. Plivo returns
+   * them without a leading `+`, which is why the comparison is on digits.
+   *
+   * `owned: null` means the question could not be answered — a token without
+   * permission to list numbers, or a network failure. That is reported as
+   * inconclusive rather than as a bad number, so a missing read permission
+   * never makes a working caller id look broken.
+   */
+  async function checkNumberOwnership(): Promise<{
+    owned: boolean | null;
+    reason?: string;
+    known?: string[];
+  }> {
+    try {
+      const res = await fetch(
+        `${apiBase}/v1/Account/${encodeURIComponent(config.authId)}/Number/?limit=20`,
+        { headers: { authorization: `Basic ${basicAuth()}` } },
+      );
+      if (!res.ok) {
+        return { owned: null, reason: `number lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json().catch(() => ({}))) as {
+        objects?: Array<{ number?: string }>;
+      };
+      const list = body.objects;
+      if (!Array.isArray(list)) {
+        return { owned: null, reason: 'unexpected number lookup response' };
+      }
+      const known = list
+        .map((n) => n.number)
+        .filter((n): n is string => typeof n === 'string' && n !== '');
+      return known.some((n) => sameNumber(n, config.phoneNumber))
+        ? { owned: true }
+        : { owned: false, known };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const problem = describeE164Problem(config.phoneNumber);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.phoneNumber,
+        hint: `PlivoVoiceConfig.phoneNumber ${problem}. Calls are placed from a rented Plivo number — an alphanumeric sender has no meaning on a voice leg.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.phoneNumber };
+    }
+    if (ownership.owned === false) {
+      const known = ownership.known ?? [];
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.phoneNumber,
+        hint: `${config.phoneNumber} is not a number on this Plivo account. Check it at console.plivo.com → Phone Numbers → Your Numbers.${
+          known.length > 0 ? ` This account has: ${known.slice(0, 5).join(', ')}.` : ''
+        }`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.phoneNumber,
+      hint: `${config.phoneNumber} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.authId || !config.authId.startsWith('MA')) {
       return {
@@ -459,6 +548,16 @@ export function createPlivoVoiceAdapter(config: PlivoVoiceConfig): PlivoVoiceAda
         ok: false,
         reason: 'unauthorized',
         hint: 'PlivoVoiceConfig.authToken missing. Find it next to the Auth ID at console.plivo.com → Dashboard.',
+      };
+    }
+    // verifyPhoneNumber() gates on the format too, but running it here first
+    // means a malformed number fails before any network call is made.
+    const phoneProblem = describeE164Problem(config.phoneNumber);
+    if (phoneProblem) {
+      return {
+        ok: false,
+        reason: 'unauthorized',
+        hint: `PlivoVoiceConfig.phoneNumber ${phoneProblem}.`,
       };
     }
 
@@ -477,6 +576,20 @@ export function createPlivoVoiceAdapter(config: PlivoVoiceConfig): PlivoVoiceAda
         return { ok: false, reason: 'unknown', hint: `Plivo returned HTTP ${res.status}` };
       }
       const data = (await res.json().catch(() => ({}))) as { name?: string };
+
+      // The credentials are good; now confirm the caller id is actually on this
+      // account. A number rented on a different Plivo account passes the format
+      // gate but fails every call.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint:
+            numberCheck.hint ??
+            `The configured number is not usable (${numberCheck.status}).`,
+        };
+      }
       return { ok: true, accountInfo: `${data.name ?? config.authId} (from: ${config.phoneNumber})` };
     } catch (err) {
       return {
@@ -514,6 +627,7 @@ export function createPlivoVoiceAdapter(config: PlivoVoiceConfig): PlivoVoiceAda
     getInteractionAck,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     uploadMedia,
     downloadMedia,
     initiateCall,

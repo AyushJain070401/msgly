@@ -768,3 +768,39 @@ describe('number list envelope', () => {
     expect(await a.verifyPhoneNumber()).toMatchObject({ ok: false, status: 'not_owned' });
   });
 });
+
+describe('createDialAdapter getChatLink', () => {
+  it('builds an sms: link for a line referenced by its number', async () => {
+    const link = await createDialAdapter(baseConfig).getChatLink!();
+    expect(link).toMatchObject({
+      channel: 'dial',
+      url: 'sms:+15550001111',
+      prefilled: false,
+      tracked: false,
+      target: '+15550001111',
+    });
+  });
+
+  it('prefills the first message and escapes it', async () => {
+    const link = await createDialAdapter(baseConfig).getChatLink!({
+      text: 'Hi & hello',
+    });
+    expect(link?.url).toBe('sms:+15550001111?body=Hi%20%26%20hello');
+    expect(link?.prefilled).toBe(true);
+  });
+
+  it('reports no link for a line referenced by id or nickname', async () => {
+    // Both send fine; neither is something a scanner can dial.
+    for (const fromNumber of ['pn_01HQ8Z', 'support-line']) {
+      expect(
+        await createDialAdapter({ ...baseConfig, fromNumber }).getChatLink!(),
+      ).toBeNull();
+    }
+  });
+
+  it('never claims to carry a tracking ref', async () => {
+    const link = await createDialAdapter(baseConfig).getChatLink!({ ref: 'poster' });
+    expect(link?.tracked).toBe(false);
+    expect(link?.url).not.toContain('poster');
+  });
+});

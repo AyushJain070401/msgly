@@ -101,6 +101,31 @@ createPlivoVoiceAdapter({ ...config, allowUnsignedWebhooks: true });  // only if
 
 Several comma-separated signatures are accepted, which is what Plivo sends during key rotation.
 
+## Checking the caller id
+
+`verifyCredentials()` validates `phoneNumber` as well as the auth ID and token,
+so a wrong caller id is caught where it was typed rather than on the first call.
+The check is also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+It first checks the value is valid E.164 — naming the actual mistake, such as a
+missing `+` or leftover dashes, and before any network call — then asks Plivo
+whether the number is rented on this account, which also catches a valid number
+belonging to a *different* Plivo account. Plivo returns its numbers without a
+leading `+`, so the comparison is on digits.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters: a token that cannot list numbers can't answer the ownership question, so
+the check reports `ok: true` with `inconclusive` rather than calling a working
+caller id invalid. Only `not_owned` and `malformed` fail.
+
+There is no alphanumeric-sender case here — a voice leg has to come from a real
+number.
+
 ## License
 
 MIT

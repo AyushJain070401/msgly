@@ -10,9 +10,16 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
-import { isValidE164, withQuery } from '@msgly/core';
+import {
+  describeE164Problem,
+  isAlphanumericSenderId,
+  isValidE164,
+  sameNumber,
+  withQuery,
+} from '@msgly/core';
 
 export interface VonageSmsConfig {
   /** API key from the Vonage dashboard. */
@@ -45,6 +52,14 @@ export interface VonageSmsConfig {
 
 export interface VonageSmsAdapter extends Adapter {
   readonly channel: 'vonage-sms';
+  /**
+   * Check that `from` is usable on this account.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for
+   * free. It is exposed separately for the case where the sender is changed
+   * on an already-connected account.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
 }
 
 const DEFAULT_API_BASE = 'https://rest.nexmo.com';
@@ -310,6 +325,96 @@ export function createVonageSmsAdapter(config: VonageSmsConfig): VonageSmsAdapte
     };
   }
 
+  /**
+   * Ask Vonage whether `from` is a number on this account.
+   *
+   * `GET /account/numbers` lists the numbers rented on the account. Vonage
+   * returns each `msisdn` without a leading `+`, which is why the comparison is
+   * on digits.
+   *
+   * `owned: null` means the question could not be answered — a key without
+   * permission to list numbers, or a network failure. That is reported as
+   * inconclusive rather than as a bad number.
+   */
+  async function checkNumberOwnership(): Promise<{
+    owned: boolean | null;
+    reason?: string;
+    known?: string[];
+  }> {
+    try {
+      const res = await fetch(
+        `${apiBase}/account/numbers?api_key=${encodeURIComponent(config.apiKey)}&api_secret=${encodeURIComponent(config.apiSecret)}&size=100`,
+      );
+      if (!res.ok) {
+        return { owned: null, reason: `number lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json().catch(() => ({}))) as {
+        numbers?: Array<{ msisdn?: string }>;
+      };
+      const list = body.numbers;
+      if (!Array.isArray(list)) {
+        return { owned: null, reason: 'unexpected number lookup response' };
+      }
+      const known = list
+        .map((n) => n.msisdn)
+        .filter((n): n is string => typeof n === 'string' && n !== '');
+      return known.some((n) => sameNumber(n, config.from))
+        ? { owned: true }
+        : { owned: false, known };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    // An alphanumeric sender is registered with the destination carrier rather
+    // than bought on the account, so there is nothing to look it up against —
+    // and failing the E.164 gate on one would reject a valid configuration.
+    if (isAlphanumericSenderId(config.from)) {
+      return {
+        ok: true,
+        status: 'inconclusive',
+        phoneNumber: config.from,
+        hint: `"${config.from}" is an alphanumeric sender ID, which is registered with the destination carrier rather than rented on your Vonage account — it cannot be verified here. Note that recipients cannot reply to it, and several countries (including the US and Canada) reject it outright.`,
+      };
+    }
+
+    const problem = describeE164Problem(config.from);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.from,
+        hint: `VonageSmsConfig.from ${problem}. It takes a Vonage number in E.164, or an alphanumeric sender ID of up to 11 characters.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.from };
+    }
+    if (ownership.owned === false) {
+      const known = ownership.known ?? [];
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.from,
+        hint: `${config.from} is not a number on this Vonage account. Check it at dashboard.nexmo.com → Numbers → Your numbers.${
+          known.length > 0 ? ` This account has: ${known.slice(0, 5).join(', ')}.` : ''
+        }`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.from,
+      hint: `${config.from} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.apiKey || !config.apiSecret) {
       return {
@@ -335,6 +440,20 @@ export function createVonageSmsAdapter(config: VonageSmsConfig): VonageSmsAdapte
       }
 
       const data = (await res.json().catch(() => ({}))) as { value?: number };
+
+      // The credentials are good; now confirm the sender is actually usable.
+      // A well-formed number rented on a different Vonage account passes the
+      // format gate but fails every send.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint:
+            numberCheck.hint ??
+            `The configured sender is not usable (${numberCheck.status}).`,
+        };
+      }
       return {
         ok: true,
         accountInfo: `${config.apiKey} (from: ${config.from}${
@@ -386,6 +505,7 @@ export function createVonageSmsAdapter(config: VonageSmsConfig): VonageSmsAdapte
     channel: 'vonage-sms',
     capabilities: CAPABILITIES,
     getChatLink,
+    verifyPhoneNumber,
     send,
     handleWebhook,
     verifySignature,

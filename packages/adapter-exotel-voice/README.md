@@ -96,6 +96,33 @@ Only a failed call suppresses. Busy and no-answer are the *person*, not the numb
 
 Exotel does not sign its callbacks, so a `?token=` on the URL is the only guard short of IP allow-listing. Without one configured the adapter **rejects** rather than accepting anything that arrives; `allowUnsignedWebhooks: true` is the explicit opt-out.
 
+## Checking the ExoPhone
+
+`verifyCredentials()` validates `callerId` as well as the credentials, so a wrong
+ExoPhone is caught where it was typed rather than on the first call. The check is
+also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+918047123456', hint: '…' }
+```
+
+It first checks the value is valid E.164 — naming the actual mistake, such as a
+missing `+` or an Indian number typed with its leading `0`, and before any
+network call — then asks Exotel whether the number is an ExoPhone on this
+account.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. Only
+`not_owned` and `malformed` fail.
+
+**The ownership lookup is modeled, not fetched.** Exotel's v1 API is shaped like
+Twilio's, so the check calls
+`GET /v1/Accounts/{sid}/IncomingPhoneNumbers.json` and accepts several plausible
+envelopes — the same caveat the Genesys adapters carry. That is why an
+unanswerable lookup fails open: if the path or envelope is wrong, the check
+reports `inconclusive` and setup still succeeds rather than rejecting a valid
+ExoPhone.
+
 ## License
 
 MIT

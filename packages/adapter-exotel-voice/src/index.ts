@@ -8,8 +8,10 @@ import type {
   MediaFile,
   MediaReference,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
+import { describeE164Problem, sameNumber } from '@msgly/core';
 
 export interface ExotelVoiceConfig {
   /** Exotel Account SID (the subdomain in your dashboard URL). */
@@ -47,6 +49,14 @@ export interface ExotelVoiceConfig {
 
 export interface ExotelVoiceAdapter extends Adapter {
   readonly channel: 'exotel-voice';
+  /**
+   * Check that `callerId` is an ExoPhone on this account.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for free.
+   * It is exposed separately for the case where the ExoPhone is changed on an
+   * already-connected account.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
   /**
    * Bridge two numbers: Exotel calls `from`, and on answer dials `to`.
    *
@@ -376,6 +386,99 @@ export function createExotelVoiceAdapter(config: ExotelVoiceConfig): ExotelVoice
     return diff === 0;
   }
 
+  /**
+   * Ask Exotel whether `callerId` is an ExoPhone on this account.
+   *
+   * `GET /v1/Accounts/{sid}/IncomingPhoneNumbers.json` — Exotel's v1 API is
+   * modeled on Twilio's, which is why this path and the `PhoneNumbers` envelope
+   * look familiar. It is **modeled, not fetched**: written from platform
+   * knowledge rather than verified against a live account, the same caveat the
+   * Genesys adapters carry. That is why an unanswerable lookup fails open — if
+   * the path or envelope is wrong, setup still succeeds with `inconclusive`
+   * rather than rejecting a valid ExoPhone.
+   *
+   * Several envelopes are accepted for the same reason.
+   */
+  async function checkNumberOwnership(): Promise<{
+    owned: boolean | null;
+    reason?: string;
+    known?: string[];
+  }> {
+    try {
+      const res = await fetch(accountUrl('/IncomingPhoneNumbers.json?PageSize=50'), {
+        headers: { authorization: authHeader() },
+      });
+      if (!res.ok) {
+        return { owned: null, reason: `ExoPhone lookup returned HTTP ${res.status}` };
+      }
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const list = [
+        body['PhoneNumbers'],
+        body['IncomingPhoneNumbers'],
+        body['incoming_phone_numbers'],
+        body['phone_numbers'],
+        body['numbers'],
+        body,
+      ].find((v): v is unknown[] => Array.isArray(v));
+      if (!list) {
+        return { owned: null, reason: 'unexpected ExoPhone lookup response' };
+      }
+      const known: string[] = [];
+      for (const entry of list) {
+        if (!entry || typeof entry !== 'object') continue;
+        const e = entry as Record<string, unknown>;
+        const value =
+          e['PhoneNumber'] ?? e['phone_number'] ?? e['Number'] ?? e['number'];
+        if (typeof value === 'string' && value !== '') known.push(value);
+      }
+      if (known.length === 0) {
+        return { owned: null, reason: 'the ExoPhone list came back with no numbers in it' };
+      }
+      return known.some((n) => sameNumber(n, config.callerId))
+        ? { owned: true }
+        : { owned: false, known };
+    } catch (err) {
+      return {
+        owned: null,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const problem = describeE164Problem(config.callerId);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: config.callerId,
+        hint: `ExotelVoiceConfig.callerId ${problem}. It takes an ExoPhone in E.164 — e.g. +918047123456.`,
+      };
+    }
+
+    const ownership = await checkNumberOwnership();
+    if (ownership.owned === true) {
+      return { ok: true, status: 'owned', phoneNumber: config.callerId };
+    }
+    if (ownership.owned === false) {
+      const known = ownership.known ?? [];
+      return {
+        ok: false,
+        status: 'not_owned',
+        phoneNumber: config.callerId,
+        hint: `${config.callerId} is not an ExoPhone on this account. Check it at my.exotel.com → ExoPhones.${
+          known.length > 0 ? ` This account has: ${known.slice(0, 5).join(', ')}.` : ''
+        }`,
+      };
+    }
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: config.callerId,
+      hint: `${config.callerId} looks well-formed, but it could not be confirmed against the account: ${ownership.reason}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.accountSid || !config.apiKey || !config.apiToken) {
       return {
@@ -384,11 +487,14 @@ export function createExotelVoiceAdapter(config: ExotelVoiceConfig): ExotelVoice
         hint: 'ExotelVoiceConfig.accountSid, apiKey and apiToken are all required — find them at my.exotel.com → Settings → API Credentials. The Account SID is the subdomain in your dashboard URL.',
       };
     }
-    if (!config.callerId) {
+    // Checked before any network call, so a malformed ExoPhone is reported
+    // against the field it was typed into.
+    const phoneProblem = describeE164Problem(config.callerId);
+    if (phoneProblem) {
       return {
         ok: false,
         reason: 'unauthorized',
-        hint: 'ExotelVoiceConfig.callerId is required — the ExoPhone number shown to the customer, in E.164.',
+        hint: `ExotelVoiceConfig.callerId ${phoneProblem}. It is the ExoPhone shown to the customer, in E.164 — e.g. +918047123456.`,
       };
     }
 
@@ -412,6 +518,19 @@ export function createExotelVoiceAdapter(config: ExotelVoiceConfig): ExotelVoice
       }
       if (!res.ok) {
         return { ok: false, reason: 'unknown', hint: `Exotel returned HTTP ${res.status}` };
+      }
+      // The credentials are good; now confirm the ExoPhone is actually on this
+      // account. One belonging to a different Exotel account passes the format
+      // gate but fails every call.
+      const numberCheck = await verifyPhoneNumber();
+      if (!numberCheck.ok) {
+        return {
+          ok: false,
+          reason: 'unauthorized',
+          hint:
+            numberCheck.hint ??
+            `The configured ExoPhone is not usable (${numberCheck.status}).`,
+        };
       }
       return { ok: true, accountInfo: `${config.accountSid} (caller id: ${config.callerId})` };
     } catch (err) {
@@ -450,6 +569,7 @@ export function createExotelVoiceAdapter(config: ExotelVoiceConfig): ExotelVoice
     handleWebhook,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     uploadMedia,
     downloadMedia,
     connectNumbers,

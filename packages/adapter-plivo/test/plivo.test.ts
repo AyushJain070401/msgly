@@ -260,18 +260,98 @@ describe('createPlivoAdapter', () => {
   });
 
   it('verifyCredentials reports the account name', async () => {
+    // Two calls now: the account probe, then the number lookup. The second has
+    // to carry the configured number — an empty list legitimately means "that
+    // number is not on this account".
     globalThis.fetch = vi.fn().mockImplementation(
-      async () =>
+      async (url: string) =>
         ({
           ok: true,
           status: 200,
-          json: async () => ({ name: 'Acme Inc', cash_credits: '10.5' }),
+          json: async () =>
+            String(url).includes('/Number/')
+              ? { objects: [{ number: '15550001111' }] }
+              : { name: 'Acme Inc', cash_credits: '10.5' },
         }) as Response,
     ) as unknown as typeof fetch;
 
     const result = await createPlivoAdapter(baseConfig).verifyCredentials();
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.accountInfo).toContain('Acme Inc');
+  });
+
+  it('verifyCredentials fails when the number is on another account', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async (url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(url).includes('/Number/')
+              ? { objects: [{ number: '15559998888' }] }
+              : { name: 'Acme Inc' },
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoAdapter(baseConfig).verifyCredentials();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.hint).toContain('not a number on this Plivo account');
+      // The hint lists what the account does have, so the mistake is obvious.
+      expect(result.hint).toContain('15559998888');
+    }
+  });
+
+  it('verifyPhoneNumber matches a rented number Plivo returns without a "+"', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ objects: [{ number: '15550001111' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoAdapter(baseConfig).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('verifyPhoneNumber names the format mistake without making a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createPlivoAdapter({
+      ...baseConfig,
+      src: '15550001111',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('missing the leading "+"');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber treats an alphanumeric sender as unverifiable, not broken', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createPlivoAdapter({
+      ...baseConfig,
+      src: 'ACMECO',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('alphanumeric sender ID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber reports an unanswerable lookup as inconclusive', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () => ({ ok: false, status: 403, json: async () => ({}) }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoAdapter(baseConfig).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('403');
   });
 
   it('verifyCredentials reports a 401 as unauthorized', async () => {

@@ -1,7 +1,7 @@
 {
   "name": "@msgly/tiktok",
   "version": "1.11.0",
-  "description": "TikTok adapter for Msgly — video and photo publishing, comment replies and direct messages",
+  "description": "TikTok adapter for Msgly \u2014 video and photo publishing, comment replies and direct messages",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -23,7 +23,7 @@
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

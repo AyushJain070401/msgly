@@ -1,7 +1,7 @@
 {
   "name": "@msgly/viber",
   "version": "1.11.0",
-  "description": "Viber Business Messages adapter for Msgly — rich media, keyboards, signed webhooks",
+  "description": "Viber Business Messages adapter for Msgly \u2014 rich media, keyboards, signed webhooks",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -23,7 +23,7 @@
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

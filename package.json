@@ -2,7 +2,7 @@
   "name": "msgly",
   "version": "1.0.0",
   "private": true,
-  "description": "Open-source unified messaging library — one API for chat, email, SMS and voice across WhatsApp, Telegram, Slack, Teams, Discord, LINE, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Gmail, Outlook, SMTP/IMAP, Resend, SendGrid, Twilio, Exotel, MSG91, Vonage, Plivo, Telnyx, Dial and Genesys Cloud CX",
+  "description": "Open-source unified messaging library \u2014 one API for chat, email, SMS and voice across WhatsApp, Telegram, Slack, Teams, Discord, LINE, WeChat, Viber, Mattermost, Rocket.Chat, Google Chat, Gmail, Outlook, SMTP/IMAP, Resend, SendGrid, Twilio, Exotel, MSG91, Vonage, Plivo, Telnyx, Dial and Genesys Cloud CX",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
   "engines": {
@@ -25,13 +25,13 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.11.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
-    "eslint": "^8.57.0",
+    "eslint": "^10.10.0",
     "tsup": "^8.0.0",
-    "turbo": "^1.13.0",
+    "turbo": "^2.10.13",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^1.4.0"
   },
   "homepage": "https://ayushjain070401.github.io/msgly/",

@@ -54,7 +54,7 @@ export type KnownChannel =
  */
 // `string & {}` is the standard idiom for "any string, but keep autocomplete
 // for the union members". Widening to plain `string` would lose the hints.
-// eslint-disable-next-line @typescript-eslint/ban-types
+// `no-empty-object-type` allows the intersection form, so no disable is needed.
 export type ChannelName = KnownChannel | (string & {});
 
 export type MessageDirection = 'inbound' | 'outbound';

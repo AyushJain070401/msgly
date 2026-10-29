@@ -1,13 +1,16 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
     "test": {
       "dependsOn": ["build"],
-      "outputs": ["coverage/**"]
+      // `vitest run` writes no coverage report, so declaring `coverage/**`
+      // only made turbo warn on every package. Add it back alongside a
+      // `--coverage` flag if that changes.
+      "outputs": []
     },
     "lint": {
       "outputs": []

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      // This example is run with tsx rather than compiled, so its `build` is a
+      // no-op. Without clearing the root's `dist/**`, turbo warns on every run
+      // that the task produced no output files.
+      "outputs": []
+    }
+  }
+}

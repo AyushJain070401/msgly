@@ -93,6 +93,32 @@ Only failed and rejected suppress. Busy and unanswered are the *person*, not the
 
 Vonage signs voice webhooks only when the application is configured for it, and the signature is over a JWT in the `Authorization` header rather than the body. This adapter does not attempt to verify it and says so rather than returning a confident `true` — put the webhook behind a secret path or your own auth, and treat call events as untrusted until you do.
 
+## Checking the caller id
+
+`verifyCredentials()` validates `phoneNumber` as well as the application ID and
+private key, so a malformed caller id is caught where it was typed rather than on
+the first call. The check is also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: true, status: 'inconclusive', phoneNumber: '15551234567', hint: '…' }
+```
+
+**This is a format check only, deliberately.** Vonage rents numbers at the
+account level, and the only endpoint that lists them — `GET /account/numbers` —
+authenticates with the `api_key`/`api_secret` pair `@msgly/vonage-sms` takes.
+Voice authenticates with an application JWT, which cannot read that resource, and
+`VonageVoiceConfig` has no reason to carry account credentials just for a setup
+check. So a well-formed number reports `inconclusive` rather than `owned`: the
+format mistakes people actually hit are caught, and the ownership question is
+reported as unanswered rather than guessed at. The hint says to check the number
+is linked to the application.
+
+Note that Vonage Voice takes the number **without** a leading `+`, unlike every
+other adapter here. The gate accepts either form — rejecting a number that is
+right in every way but one character would not help anyone — and names the form
+Vonage wants in the hint. Only `malformed` fails.
+
 ## License
 
 MIT

@@ -101,3 +101,56 @@ export interface PhoneNumberCheckResult {
   /** Actionable explanation. Always set unless `status` is `owned`. */
   hint?: string;
 }
+
+/**
+ * Just the digits of `value`, with the `+` and any separators dropped.
+ *
+ * Providers are not consistent about the `+`: Twilio's `IncomingPhoneNumbers`
+ * returns `+14155551212`, Plivo's `Number` resource returns `14155551212`, and
+ * Vonage Voice is configured without one on purpose. Comparing digits sidesteps
+ * the whole question instead of normalizing at every call site.
+ */
+export function phoneDigits(value: string | undefined | null): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\D/g, '');
+}
+
+/**
+ * True when two numbers are the same number, however each side writes it.
+ *
+ * Digit-for-digit, so `+14155551212`, `14155551212` and `(415) 555-1212` with a
+ * country code all match. An empty value on either side never matches — a
+ * missing number is not "the same as" anything.
+ */
+export function sameNumber(
+  a: string | undefined | null,
+  b: string | undefined | null,
+): boolean {
+  const left = phoneDigits(a);
+  const right = phoneDigits(b);
+  if (left === '' || right === '') return false;
+  return left === right;
+}
+
+/**
+ * True when `value` looks like an alphanumeric sender id rather than a phone
+ * number — `ACMECO`, not `+14155551212`.
+ *
+ * Plivo, Vonage and Telnyx all accept either in their sender field, so a value
+ * that fails the E.164 gate is not necessarily a typo. Carriers cap these at 11
+ * characters and require at least one letter, which is what this checks: enough
+ * to tell "sender id" from "mistyped number" and no more.
+ *
+ * Verifying one against the account is not possible — an alphanumeric sender is
+ * registered with the carrier, not purchased on the account — so adapters report
+ * it as `inconclusive` rather than failing a working configuration.
+ */
+export function isAlphanumericSenderId(
+  value: string | undefined | null,
+): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 11) return false;
+  if (!/[A-Za-z]/.test(trimmed)) return false;
+  return /^[A-Za-z0-9 _-]+$/.test(trimmed);
+}

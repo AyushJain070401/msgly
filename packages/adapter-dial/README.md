@@ -125,6 +125,25 @@ accepts a bare array plus the plausible wrappers, and reports `inconclusive`
 (not `not_owned`) when it recognises none of them, so an unexpected shape never
 reads as "your number is wrong".
 
+## Chat link
+
+A Dial line referenced by its number can back a "text us" QR code:
+
+```typescript
+const link = await adapter.getChatLink({ text: 'Hi!' });
+// { channel: 'dial', url: 'sms:+15550001111?body=Hi%21', prefilled: true, tracked: false, … }
+```
+
+One `sms:` link covers the line however it is provisioned — the system messaging
+app picks between SMS/MMS and iMessage on its own.
+
+`getChatLink()` returns `null` when `fromNumber` is a phone-number id or a
+nickname rather than an E.164 number. Those send perfectly well, but there is
+nothing to put in a link: pass the number itself as `fromNumber`, or build the
+link from the number the dashboard shows. `tracked` is always `false` — SMS
+carries no referral payload, so a `ref` is reported as dropped rather than
+quietly appended to a link that would not work.
+
 ## License
 
 MIT

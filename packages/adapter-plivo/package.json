@@ -1,7 +1,7 @@
 {
   "name": "@msgly/plivo",
   "version": "1.11.0",
-  "description": "Plivo SMS adapter for Msgly — global SMS with V3 signature verification",
+  "description": "Plivo SMS adapter for Msgly \u2014 global SMS with V3 signature verification",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -23,7 +23,7 @@
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

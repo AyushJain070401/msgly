@@ -1,7 +1,7 @@
 {
   "name": "@msgly/ses",
   "version": "1.11.0",
-  "description": "Amazon SES adapter for Msgly — high-volume email with SigV4 signing and SNS bounce handling",
+  "description": "Amazon SES adapter for Msgly \u2014 high-volume email with SigV4 signing and SNS bounce handling",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -23,7 +23,7 @@
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

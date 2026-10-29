@@ -1,6 +1,8 @@
 import type {
   Adapter,
   AdapterCapabilities,
+  ChatLink,
+  ChatLinkOptions,
   ContactRef,
   CredentialsCheckResult,
   DeliveryReceipt,
@@ -14,6 +16,7 @@ import type {
   RateLimit,
   WebhookRequest,
 } from '@msgly/core';
+import { isValidE164, withQuery } from '@msgly/core';
 
 /** The rails a Dial line can carry. Inbound also reports `rcs` and `unknown`. */
 export type DialChannel = 'imessage' | 'whatsapp';
@@ -793,10 +796,40 @@ export function createDialAdapter(config: DialConfig): DialAdapter {
     };
   }
 
+  /**
+   * `sms:` link for a "text us" QR code. Scanning it opens the phone's
+   * messaging app addressed to this number, with `text` prefilled.
+   *
+   * A Dial line carries SMS/MMS and, on an iMessage number, iMessage — both of
+   * which the system messaging app picks between on its own, so one `sms:` link
+   * covers the line however it is provisioned.
+   *
+   * Returns null when `fromNumber` is a phone-number id or a nickname rather
+   * than an E.164 number. Those send perfectly well, but there is nothing to
+   * put in a link: pass the number itself as `fromNumber`, or render the link
+   * from the number the dashboard shows.
+   */
+  async function getChatLink(options: ChatLinkOptions = {}): Promise<ChatLink | null> {
+    const number = config.fromNumber;
+    if (!isValidE164(number)) return null;
+
+    return {
+      channel: 'dial',
+      // RFC 5724. `body` is the de-facto prefill parameter; iOS and Android
+      // both honour it, and a number that already carries `+` survives.
+      url: withQuery(`sms:${number}`, { body: options.text }),
+      prefilled: Boolean(options.text),
+      // SMS carries no referral payload — there is nowhere to put one.
+      tracked: false,
+      target: number,
+    };
+  }
+
   return {
     channel: 'dial',
     capabilities: CAPABILITIES,
     rateLimit: DEFAULT_RATE_LIMIT,
+    getChatLink,
     send,
     handleWebhook,
     parseStatuses,

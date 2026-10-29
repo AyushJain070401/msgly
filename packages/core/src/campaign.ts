@@ -404,7 +404,9 @@ export function createBulkRunner(deps: BulkRunnerDeps) {
         // Checked before taking a rate-limit token: a suppressed recipient
         // costs no throughput, and never reaches the adapter.
         if (suppression) {
-          let blocked = false;
+          // No initializer: the catch below settles and continues, so the
+          // only way past it is the assignment succeeding.
+          let blocked: boolean;
           try {
             blocked = await suppression.isSuppressed(
               recipient.contact.channel,

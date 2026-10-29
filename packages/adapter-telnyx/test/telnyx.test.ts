@@ -273,12 +273,88 @@ describe('createTelnyxAdapter', () => {
   });
 
   it('verifyCredentials succeeds on a healthy key', async () => {
+    // Two calls now: the messaging-profile probe, then the number lookup. The
+    // second has to carry the configured number — an empty list legitimately
+    // means "that number is not on this account".
+    globalThis.fetch = vi.fn().mockImplementation(
+      async (url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(url).includes('/v2/phone_numbers')
+              ? { data: [{ phone_number: '+15550001111' }] }
+              : { data: [] },
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createTelnyxAdapter(baseConfig).verifyCredentials();
+    expect(result.ok).toBe(true);
+  });
+
+  it('verifyCredentials fails when the number is not on the account', async () => {
     globalThis.fetch = vi.fn().mockImplementation(
       async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) }) as Response,
     ) as unknown as typeof fetch;
 
     const result = await createTelnyxAdapter(baseConfig).verifyCredentials();
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.hint).toContain('not a number on this Telnyx account');
+  });
+
+  it('verifyPhoneNumber confirms a number the account owns', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ phone_number: '15550001111' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    // Telnyx echoes the number back without a "+" here; the match is on digits.
+    const result = await createTelnyxAdapter(baseConfig).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('verifyPhoneNumber names the specific format mistake without a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createTelnyxAdapter({
+      ...baseConfig,
+      from: '5550001111',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('missing the leading "+"');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber treats an alphanumeric sender as unverifiable, not broken', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createTelnyxAdapter({
+      ...baseConfig,
+      from: 'ACMECO',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('alphanumeric sender ID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber reports a lookup it cannot make as inconclusive', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () => ({ ok: false, status: 403, json: async () => ({}) }) as Response,
+    ) as unknown as typeof fetch;
+
+    // A key without number-read permission must not make a working number
+    // look broken.
+    const result = await createTelnyxAdapter(baseConfig).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('403');
   });
 
   it('verifyCredentials reports a 401 as unauthorized', async () => {

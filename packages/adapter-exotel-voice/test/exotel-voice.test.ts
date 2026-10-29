@@ -236,3 +236,73 @@ describe('verifyCredentials', () => {
     expect((await createExotelVoiceAdapter(config).verifyCredentials()).ok).toBe(true);
   });
 });
+
+describe('createExotelVoiceAdapter verifyPhoneNumber', () => {
+  it('confirms an ExoPhone on the account', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ PhoneNumbers: [{ PhoneNumber: '+918047123456' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createExotelVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('accepts the other envelopes the lookup might come back in', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          // A bare array, which is why the shape is matched leniently: the
+          // endpoint is modeled from Exotel's v1 API rather than verified.
+          json: async () => [{ phone_number: '918047123456' }],
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createExotelVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('reports an ExoPhone on another account as not owned', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ PhoneNumbers: [{ PhoneNumber: '+918099999999' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createExotelVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: false, status: 'not_owned' });
+    expect(result.hint).toContain('+918099999999');
+  });
+
+  it('names the format mistake without making a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createExotelVoiceAdapter({
+      ...config,
+      callerId: '08047123456',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('missing the leading "+"');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails open when the modeled endpoint answers with something unexpected', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () => ({ ok: true, status: 200, json: async () => ({ Call: {} }) }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createExotelVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+  });
+});

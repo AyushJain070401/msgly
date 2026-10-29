@@ -9,8 +9,10 @@ import type {
   MediaReference,
   MessageContent,
   OutboundMessage,
+  PhoneNumberCheckResult,
   WebhookRequest,
 } from '@msgly/core';
+import { describeE164Problem, phoneDigits } from '@msgly/core';
 
 export interface VonageVoiceConfig {
   /** Vonage Application ID (a UUID), from the dashboard's Applications page. */
@@ -49,6 +51,14 @@ export type NccoAction = Record<string, unknown>;
 
 export interface VonageVoiceAdapter extends Adapter {
   readonly channel: 'vonage-voice';
+  /**
+   * Check that `phoneNumber` is a usable caller id.
+   *
+   * `verifyCredentials()` calls this, so a normal setup flow gets it for free.
+   * It is exposed separately for the case where the number is changed on an
+   * already-connected application.
+   */
+  verifyPhoneNumber(): Promise<PhoneNumberCheckResult>;
   /** Mint (and cache) the JWT Vonage Voice authenticates with. */
   getJwt(): Promise<string>;
   /** Place an outbound call, answered by an inline NCCO or an answer URL. */
@@ -478,6 +488,48 @@ export function createVonageVoiceAdapter(config: VonageVoiceConfig): VonageVoice
     return true;
   }
 
+  /**
+   * Check the configured caller id.
+   *
+   * This is a format check only, and deliberately so. Vonage rents numbers at
+   * the *account* level, and the only endpoint that lists them —
+   * `GET /account/numbers` — authenticates with the api_key/api_secret pair
+   * that `@msgly/vonage-sms` takes. Voice authenticates with an application
+   * JWT, which cannot read that resource, and `VonageVoiceConfig` has no reason
+   * to carry account credentials just for a setup check.
+   *
+   * So a well-formed number reports `inconclusive` rather than `owned`: the
+   * format mistakes are caught — which is what people actually hit — and the
+   * ownership question is reported as unanswered rather than guessed at.
+   *
+   * Note Vonage Voice takes the number **without** a leading `+`, unlike every
+   * other adapter here, so the E.164 gate runs against a normalized copy and
+   * the hint names the form Vonage wants.
+   */
+  async function verifyPhoneNumber(): Promise<PhoneNumberCheckResult> {
+    const configured = (config.phoneNumber ?? '').trim();
+    const digits = phoneDigits(configured);
+    // `+` is accepted here even though Vonage wants it bare: rejecting a number
+    // that is right in every way but one character would be unhelpful, and the
+    // send path normalizes it anyway.
+    const problem = describeE164Problem(digits === '' ? configured : `+${digits}`);
+    if (problem) {
+      return {
+        ok: false,
+        status: 'malformed',
+        phoneNumber: configured,
+        hint: `VonageVoiceConfig.phoneNumber ${problem.replace('+15551234567', '15551234567')}. Vonage Voice takes the number without a leading "+" — e.g. 15551234567.`,
+      };
+    }
+
+    return {
+      ok: true,
+      status: 'inconclusive',
+      phoneNumber: configured,
+      hint: `${configured} is well-formed, but it cannot be confirmed against the account here: Vonage lists rented numbers under the account api_key/api_secret pair, which Voice's application JWT cannot read. Check it at dashboard.nexmo.com → Numbers → Your numbers, and that it is linked to application ${config.applicationId}.`,
+    };
+  }
+
   async function verifyCredentials(): Promise<CredentialsCheckResult> {
     if (!config.applicationId) {
       return {
@@ -491,6 +543,17 @@ export function createVonageVoiceAdapter(config: VonageVoiceConfig): VonageVoice
         ok: false,
         reason: 'unauthorized',
         hint: 'VonageVoiceConfig.privateKey is required — the private key downloaded when the application was created. It is shown once and cannot be re-downloaded.',
+      };
+    }
+
+    // Before any network call: a malformed caller id is worth reporting
+    // against the field it came from rather than as a failed call later.
+    const numberCheck = await verifyPhoneNumber();
+    if (!numberCheck.ok) {
+      return {
+        ok: false,
+        reason: 'unauthorized',
+        hint: numberCheck.hint ?? `The configured number is not usable (${numberCheck.status}).`,
       };
     }
 
@@ -559,6 +622,7 @@ export function createVonageVoiceAdapter(config: VonageVoiceConfig): VonageVoice
     getInteractionAck,
     verifySignature,
     verifyCredentials,
+    verifyPhoneNumber,
     uploadMedia,
     downloadMedia,
     getJwt,

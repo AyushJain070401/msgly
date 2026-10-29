@@ -58,6 +58,33 @@ Any message containing characters outside GSM-7 (emoji, Devanagari, Chinese, …
 is automatically sent with `type: unicode`. Sending them as plain `text` would
 silently mangle the message.
 
+## Checking the sender
+
+`verifyCredentials()` validates `from` as well as the key and secret, so a wrong
+sender is caught where it was typed rather than on the first send. The check is
+also exposed on its own:
+
+```typescript
+const check = await adapter.verifyPhoneNumber();
+// { ok: false, status: 'not_owned', phoneNumber: '+15551234567', hint: '…' }
+```
+
+For a number it first checks the value is valid E.164 — naming the actual
+mistake, such as a missing `+` or leftover dashes — then asks Vonage whether the
+number is on this account via `GET /account/numbers`, which also catches a valid
+number belonging to a *different* Vonage account. Vonage returns each `msisdn`
+without a leading `+`, so the comparison is on digits and either form matches.
+
+`status` is `owned`, `not_owned`, `malformed`, or `inconclusive`. The last one
+matters: a key that cannot list numbers can't answer the ownership question, so
+the check reports `ok: true` with `inconclusive` rather than calling a working
+number invalid. Only `not_owned` and `malformed` fail.
+
+**An alphanumeric sender ID is always `inconclusive`.** It is registered with the
+destination carrier rather than rented on your account, so there is nothing to
+look it up against — and running the E.164 gate on one would reject a valid
+configuration.
+
 ## License
 
 MIT

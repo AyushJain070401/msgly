@@ -285,3 +285,58 @@ describe('verifyCredentials', () => {
     if (!result.ok) expect(result.hint).toContain('MA');
   });
 });
+
+describe('createPlivoVoiceAdapter verifyPhoneNumber', () => {
+  it('confirms a caller id Plivo returns without a "+"', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ objects: [{ number: '15551234567' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('names the number the account does have when the configured one is absent', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ objects: [{ number: '15559998888' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: false, status: 'not_owned' });
+    expect(result.hint).toContain('15559998888');
+  });
+
+  it('names the format mistake without making a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createPlivoVoiceAdapter({
+      ...config,
+      phoneNumber: '5551234567',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('missing the leading "+"');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a lookup it cannot make as inconclusive, not as a bad number', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () => ({ ok: false, status: 403, json: async () => ({}) }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createPlivoVoiceAdapter(config).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('403');
+  });
+});

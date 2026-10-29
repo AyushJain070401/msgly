@@ -271,6 +271,103 @@ describe('createVonageSmsAdapter', () => {
     if (!result.ok) expect(result.reason).toBe('unauthorized');
   });
 
+  it('verifyCredentials confirms a rented number alongside the balance', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async (url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(url).includes('/account/numbers')
+              ? { numbers: [{ msisdn: '15550001111' }] }
+              : { value: 12.5 },
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createVonageSmsAdapter({
+      ...baseConfig,
+      from: '+15550001111',
+    }).verifyCredentials();
+    expect(result.ok).toBe(true);
+  });
+
+  it('verifyCredentials fails when the number is on another account', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async (url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(url).includes('/account/numbers')
+              ? { numbers: [{ msisdn: '15559998888' }] }
+              : { value: 12.5 },
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createVonageSmsAdapter({
+      ...baseConfig,
+      from: '+15550001111',
+    }).verifyCredentials();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.hint).toContain('not a number on this Vonage account');
+  });
+
+  it('verifyPhoneNumber matches a number Vonage returns without a "+"', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ numbers: [{ msisdn: '15550001111' }] }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createVonageSmsAdapter({
+      ...baseConfig,
+      from: '+15550001111',
+    }).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'owned' });
+  });
+
+  it('verifyPhoneNumber leaves the default alphanumeric sender alone', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // baseConfig.from is "ACMECO" — a registered sender ID, not a rented
+    // number, so there is nothing to look up and nothing to fail.
+    const result = await createVonageSmsAdapter(baseConfig).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('alphanumeric sender ID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber names the format mistake without making a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await createVonageSmsAdapter({
+      ...baseConfig,
+      from: '+1 555 000 1111',
+    }).verifyPhoneNumber();
+
+    expect(result).toMatchObject({ ok: false, status: 'malformed' });
+    expect(result.hint).toContain('strip spaces');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('verifyPhoneNumber reports an unanswerable lookup as inconclusive', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(
+      async () => ({ ok: false, status: 403, json: async () => ({}) }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await createVonageSmsAdapter({
+      ...baseConfig,
+      from: '+15550001111',
+    }).verifyPhoneNumber();
+    expect(result).toMatchObject({ ok: true, status: 'inconclusive' });
+    expect(result.hint).toContain('403');
+  });
+
   it('verifyCredentials returns a hint when the secret is missing', async () => {
     const result = await createVonageSmsAdapter({
       ...baseConfig,

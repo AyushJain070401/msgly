@@ -603,7 +603,8 @@ function b64MimeEncode(bytes: Uint8Array): string {
  */
 function encodeFilename(name: string): string {
   const clean = sanitizeHeaderValue(name).replace(/"/g, '');
-  // eslint-disable-next-line no-control-regex
+  // The range starts at 0x20, so there is no control character in it to
+  // disable `no-control-regex` for.
   if (/^[\x20-\x7E]*$/.test(clean)) return `"${clean}"`;
   return `=?utf-8?B?${b64urlEncode(clean).replace(/-/g, '+').replace(/_/g, '/')}?=`;
 }

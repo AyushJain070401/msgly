@@ -173,7 +173,9 @@ export function createMsg91Adapter(config: Msg91Config): Msg91Adapter {
     const content = message.content;
 
     let templateId: string | undefined;
-    let variables: Record<string, string> = {};
+    // No initializer: every branch below either assigns it or returns, so an
+    // empty default would only mask a branch that forgot to.
+    let variables: Record<string, string>;
 
     if (content.type === 'template') {
       templateId = content.templateName;
